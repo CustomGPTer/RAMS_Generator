@@ -1,17 +1,17 @@
 openapi: 3.1.0
 info:
   title: C2V+ RAMS Generator
-  description: Creates a fully formatted, site-specific RAMS document using a master Word template and 20 tailored inputs, for use on United Utilities wastewater projects under C2V+.
-  version: 1.0.0
+  description: Generates a site-specific RAMS document in sections using a Word template and 20 tailored inputs. Used for United Utilities projects under C2V+.
+  version: 1.1.0
 
 servers:
   - url: https://rams-gpt-backend.onrender.com
 
 paths:
-  /generate_rams:
+  /generate_risk_assessment:
     post:
-      operationId: generateRAMS
-      summary: Generate a fully populated RAMS document from a blank Word template and user input
+      operationId: generateRiskAssessment
+      summary: Append Risk Assessment section to the master RAMS document
       requestBody:
         required: true
         content:
@@ -19,45 +19,64 @@ paths:
             schema:
               type: object
               required:
-                - answers
-                - template_rams
+                - content
               properties:
-                answers:
+                content:
                   type: string
-                  description: JSON-encoded answers to the 20 RAMS questions (covering scope, site, permits, risks, roles, tools, etc.)
-                sample_rams1:
-                  type: string
-                  format: binary
-                  description: Completed RAMS example – for reference only
-                sample_rams2:
-                  type: string
-                  format: binary
-                sample_rams3:
-                  type: string
-                  format: binary
-                template_rams:
-                  type: string
-                  format: binary
-                  description: The blank master RAMS template (must include placeholders like [Enter Method Statement Here])
-                ceswi_7:
-                  type: string
-                  format: binary
-                  description: CESWI 7 reference document
-                uuceswi_issue_7:
-                  type: string
-                  format: binary
-                  description: UUCESWI Issue 7 amendments
-                what_good_looks_like:
-                  type: string
-                  format: binary
-                  description: VolkerStevin Site Standards – “What Good Looks Like”
-                reference_pack:
-                  type: string
-                  format: binary
-                  description: Additional HSE reference documents (Confined Space Regs, LOLER, PUWER, WIMES, etc.)
+                  description: Risk Assessment section text
       responses:
         '200':
-          description: RAMS document generated successfully
+          description: Updated .docx with Risk Assessment section
+          content:
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema:
+                type: string
+                format: binary
+
+  /generate_sequence:
+    post:
+      operationId: generateSequence
+      summary: Append Sequence of Activities section to the master RAMS document
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - content
+              properties:
+                content:
+                  type: string
+                  description: Sequence of Activities section text
+      responses:
+        '200':
+          description: Updated .docx with Sequence of Activities
+          content:
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema:
+                type: string
+                format: binary
+
+  /generate_method_statement:
+    post:
+      operationId: generateMethodStatement
+      summary: Append Method Statement section to the master RAMS document
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - content
+              properties:
+                content:
+                  type: string
+                  description: Method Statement section text
+      responses:
+        '200':
+          description: Final .docx with Method Statement added
           content:
             application/vnd.openxmlformats-officedocument.wordprocessingml.document:
               schema:
