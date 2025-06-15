@@ -71,6 +71,23 @@ Do NOT copy content from the above samples — they are for structure, formattin
 
 —
 
-Once finished, output the RAMS document and say:
+🧠 RAMS Section Submission Logic (API Instructions)
+
+You must:
+- Ask the user 20 tailored RAMS questions
+- Generate content for each of the 3 sections (Risk Assessment, Sequence, Method Statement)
+
+Then send each section via these backend endpoints:
+
+1. POST `/generate_risk_assessment` with the field `content`
+2. POST `/generate_sequence` with the field `content`
+3. POST `/generate_method_statement` with the field `content`
+
+- Each request appends that section into the same master `.docx` file
+- Do not return any partial Word files
+- After all 3 sections are submitted, return the completed final `.docx` file
+
+End your response with:  
 ✅ Full RAMS document generated and inserted into the official template. Download your completed `.docx` file below.
+
 
