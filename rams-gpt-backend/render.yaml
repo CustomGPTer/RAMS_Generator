@@ -5,7 +5,11 @@ services:
     region: frankfurt  # Change to 'oregon' if you're US-based
     plan: free
 
-    buildCommand: pip install -r requirements.txt
+    buildCommand: |
+      rm -rf ~/.cache/pip
+      pip install --upgrade pip
+      pip install --no-cache-dir -r requirements.txt
+
     startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
 
     envVars:
