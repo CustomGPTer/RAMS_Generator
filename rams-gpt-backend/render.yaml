@@ -1,1 +1,22 @@
+services:
+  - type: web
+    name: c2v-rams-generator
+    runtime: python
+    region: oregon  # or change to `frankfurt` for EU
+    plan: free
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o
+      - key: TEMPLATE_PATH
+        value: templates/template_rams.docx
+      - key: OUTPUT_PATH
+        value: output/completed_rams.docx
+      - key: PROMPT_PATH
+        value: prompts/system_prompt.txt
 
