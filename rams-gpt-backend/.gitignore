@@ -1,1 +1,70 @@
+# ============================================
+# 🚫 General Python Exclusions
+# ============================================
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.sqlite3
+
+# Virtual environments
+env/
+venv/
+.venv/
+
+# Editor/IDE config
+.vscode/
+.idea/
+*.swp
+
+# ============================================
+# 🔐 Security-Sensitive Files
+# ============================================
+
+# API keys and environment variables
+.env
+
+# Prevent any secret config backups
+*.env.backup
+*.env.*
+
+# ============================================
+# 📄 Document & RAMS File Exclusions
+# ============================================
+
+# Exclude working RAMS and template outputs
+*.docx
+*.pdf
+*.zip
+
+# Optional: Exclude generated output folder
+output/
+completed/
+generated/
+
+# ============================================
+# 🧪 GPT Sample Files & Data
+# ============================================
+
+# Exclude sample completions unless explicitly wanted
+samples/*.docx
+templates/*.docx
+
+# ============================================
+# ⚙️ Render / Deployment Files
+# ============================================
+
+# Optional: ignore local deployment test configs
+render-debug.log
+.DS_Store
+
+# ============================================
+# 📋 README and documentation
+# (Keep these tracked – don't ignore)
+# README.md
+# requirements.txt
+# render.yaml
+# main.py
 
