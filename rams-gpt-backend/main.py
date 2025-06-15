@@ -1,110 +1,71 @@
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, UploadFile, Form
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-import os
-import openai
-import shutil
 from docx import Document
-from dotenv import load_dotenv
-import json
-from io import BytesIO
-import uuid
+import os
+import logging
 
-# Load environment variables from .env
-load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
-model = os.getenv("OPENAI_MODEL", "gpt-4o")
-
+# Environment paths
 TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
-OUTPUT_DIR = os.path.dirname(os.getenv("OUTPUT_PATH", "output/completed_rams.docx"))
-PROMPT_PATH = os.getenv("PROMPT_PATH", "prompts/system_prompt.txt")
+OUTPUT_PATH = os.getenv("OUTPUT_PATH", "output/completed_rams.docx")
 
-# Ensure output directory exists
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+# Init FastAPI app
+app = FastAPI(title="C2V+ RAMS Generator", description="Appends sections to a master Word RAMS template cumulatively.", version="1.0.0")
 
-# FastAPI app
-app = FastAPI(title="C2V+ RAMS Generator API")
-
+# Optional: Enable CORS if testing from external UIs
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Load the system prompt
-def load_prompt():
-    with open(PROMPT_PATH, "r", encoding="utf-8") as f:
-        return f.read()
+# Logging setup
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("rams-generator")
 
-# Generate section from GPT
-def generate_section(prompt_text, temperature=0.2, max_tokens=6500):
-    response = openai.ChatCompletion.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": load_prompt()},
-            {"role": "user", "content": prompt_text}
-        ],
-        temperature=temperature,
-        max_tokens=max_tokens
-    )
-    return response["choices"][0]["message"]["content"]
+# Load master document on startup
+try:
+    doc = Document(TEMPLATE_PATH)
+    logger.info(f"Loaded template from {TEMPLATE_PATH}")
+except Exception as e:
+    logger.error(f"Error loading template: {e}")
+    raise RuntimeError("Failed to load Word template.")
 
-# Replace placeholders
-def fill_template(template_path, replacements: dict):
-    doc = Document(template_path)
-    for paragraph in doc.paragraphs:
-        for key, value in replacements.items():
-            if key in paragraph.text:
-                paragraph.text = paragraph.text.replace(key, value)
-    return doc
+def insert_section(title: str, content: str):
+    """Insert a new section with heading and content."""
+    doc.add_page_break()
+    doc.add_heading(title, level=1)
+    doc.add_paragraph(content)
+    doc.save(OUTPUT_PATH)
+    logger.info(f"Inserted section: {title} → saved to {OUTPUT_PATH}")
 
-@app.post("/generate_rams")
-async def generate_rams(
-    answers: str = Form(...),
-    template_rams: UploadFile = File(...)
-):
-    # Load answers
-    answers_data = json.loads(answers)
+@app.post("/generate_risk_assessment")
+async def generate_risk_assessment(content: str = Form(...)):
+    try:
+        insert_section("Risk Assessment", content)
+        return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    except Exception as e:
+        logger.error(f"Error inserting Risk Assessment: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
-    # Save uploaded template locally
-    temp_template_path = f"temp_{uuid.uuid4()}.docx"
-    with open(temp_template_path, "wb") as f:
-        shutil.copyfileobj(template_rams.file, f)
+@app.post("/generate_sequence")
+async def generate_sequence(content: str = Form(...)):
+    try:
+        insert_section("Sequence of Activities", content)
+        return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    except Exception as e:
+        logger.error(f"Error inserting Sequence: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
-    # Build prompts from answers
-    scope = answers_data.get("scope", "No scope provided.")
-    activity = answers_data.get("activity_description", "No activity provided.")
+@app.post("/generate_method_statement")
+async def generate_method_statement(content: str = Form(...)):
+    try:
+        insert_section("Method Statement", content)
+        return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    except Exception as e:
+        logger.error(f"Error inserting Method Statement: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
-    prompt_risk = f"Generate the Risk Assessment for:\n\nScope: {scope}\nActivity: {activity}"
-    prompt_sequence = f"Generate the Sequence of Activities for:\n\nScope: {scope}\nActivity: {activity}"
-    prompt_method = f"Generate the Method Statement including all required sections for:\n\nScope: {scope}\nActivity: {activity}"
-
-    # Generate content
-    risk_text = generate_section(prompt_risk)
-    sequence_text = generate_section(prompt_sequence)
-    method_text = generate_section(prompt_method)
-
-    # Replace placeholders
-    replacements = {
-        "[Enter Risk Assessment Table Here]": risk_text,
-        "[Enter Sequence of Activities Here]": sequence_text,
-        "[Enter Method Statement Here]": method_text
-    }
-
-    completed_doc = fill_template(temp_template_path, replacements)
-
-    # Save final file
-    output_path = f"{OUTPUT_DIR}/completed_rams_{uuid.uuid4()}.docx"
-    completed_doc.save(output_path)
-
-    # Clean up
-    os.remove(temp_template_path)
-
-    # Return completed document
-    return FileResponse(
-        path=output_path,
-        filename="C2V_RAMSDocument.docx",
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    )
 
