@@ -2,7 +2,7 @@ services:
   - type: web
     name: c2v-rams-generator
     runtime: python
-    region: oregon  # or change to `frankfurt` for EU
+    region: frankfurt  # Change to 'oregon' if you're US-based
     plan: free
 
     buildCommand: pip install -r requirements.txt
@@ -20,3 +20,6 @@ services:
       - key: PROMPT_PATH
         value: prompts/system_prompt.txt
 
+    build:
+      environment: python
+      pythonVersion: 3.11.8  # Ensure compatibility with Pydantic v1.x and avoid Rust issues
