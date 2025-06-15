@@ -42,7 +42,7 @@ def insert_section(title: str, content: str):
     logger.info(f"Inserted section: {title} → saved to {OUTPUT_PATH}")
 
 @app.post("/generate_risk_assessment")
-async def generate_risk_assessment(content: str = Form(...)):
+async def generate_risk_assessment(content: str = Body(...)):
     try:
         insert_section("Risk Assessment", content)
         return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
@@ -51,7 +51,7 @@ async def generate_risk_assessment(content: str = Form(...)):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/generate_sequence")
-async def generate_sequence(content: str = Form(...)):
+async def generate_sequence(content: str = Body(...)):
     try:
         insert_section("Sequence of Activities", content)
         return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
@@ -60,7 +60,7 @@ async def generate_sequence(content: str = Form(...)):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/generate_method_statement")
-async def generate_method_statement(content: str = Form(...)):
+async def generate_method_statement(content: str = Body(...)):
     try:
         insert_section("Method Statement", content)
         return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
