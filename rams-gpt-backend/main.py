@@ -38,7 +38,7 @@ def load_prompt():
         return f.read()
 
 # Generate section from GPT
-def generate_section(prompt_text, temperature=0.2, max_tokens=3500):
+def generate_section(prompt_text, temperature=0.2, max_tokens=6500):
     response = openai.ChatCompletion.create(
         model=model,
         messages=[
