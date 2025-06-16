@@ -1,0 +1,16 @@
+{
+  "schema_version": "v1",
+  "name_for_model": "c2v_rams_generator",
+  "name_for_human": "C2V+ RAMS Generator",
+  "description_for_model": "Generates custom Word RAMS documents by appending site-specific sections like Risk Assessment.",
+  "description_for_human": "Generate RAMS documents in Word format by submitting each section individually.",
+  "auth": {
+    "type": "none"
+  },
+  "api": {
+    "type": "openapi",
+    "url": "https://rams-gpt-backend.onrender.com/openapi.yaml"
+  },
+  "contact_email": "jonajackson@outlook.com",
+  "legal_info_url": "https://github.com/CustomGPTer/drawing-checker-privacy"
+}
