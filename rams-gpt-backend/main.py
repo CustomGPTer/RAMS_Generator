@@ -58,6 +58,7 @@ def insert_section(title: str, content: str):
 @app.post("/generate_risk_assessment")
 async def generate_risk_assessment(input: SectionInput):
     try:
+        logger.info(f"Risk Assessment content length: {len(input.content)} characters")
         insert_section("Risk Assessment", input.content)
         return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     except Exception as e:
@@ -67,6 +68,7 @@ async def generate_risk_assessment(input: SectionInput):
 @app.post("/generate_sequence")
 async def generate_sequence(input: SectionInput):
     try:
+        logger.info(f"Sequence content length: {len(input.content)} characters")
         insert_section("Sequence of Activities", input.content)
         return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     except Exception as e:
@@ -76,6 +78,7 @@ async def generate_sequence(input: SectionInput):
 @app.post("/generate_method_statement")
 async def generate_method_statement(input: SectionInput):
     try:
+        logger.info(f"Method Statement content length: {len(input.content)} characters")
         insert_section("Method Statement", input.content)
         return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     except Exception as e:
