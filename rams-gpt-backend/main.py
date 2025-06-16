@@ -11,6 +11,19 @@ from starlette.middleware.gzip import GZipMiddleware
 TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
 OUTPUT_PATH = os.getenv("OUTPUT_PATH", "output/completed_rams.docx")
 
+# Ensure output directory exists
+OUTPUT_DIR = os.path.dirname(OUTPUT_PATH)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Optional debug write check
+try:
+    test_path = os.path.join(OUTPUT_DIR, "test_write.txt")
+    with open(test_path, "w") as f:
+        f.write("RAMS generator write check")
+    logger.info(f"Write check passed: {test_path}")
+except Exception as write_err:
+    logger.error(f"WRITE ERROR: Cannot write to {OUTPUT_DIR}: {write_err}")
+
 # Init FastAPI app
 app = FastAPI(
     title="C2V+ RAMS Generator",
