@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from docx import Document
 import os
 import logging
+from starlette.middleware.gzip import GZipMiddleware
 
 # Environment paths
 TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
@@ -25,7 +26,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-from starlette.middleware.gzip import GZipMiddleware
 
 # Enable GZip compression for large text payloads
 app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -34,20 +34,13 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rams-generator")
 
-# Load master document on startup
-try:
-    doc = Document(TEMPLATE_PATH)
-    logger.info(f"Loaded template from {TEMPLATE_PATH}")
-except Exception as e:
-    logger.error(f"Error loading template: {e}")
-    raise RuntimeError("Failed to load Word template.")
-
 # Pydantic model for input validation
 class SectionInput(BaseModel):
     content: str
 
 def insert_section(title: str, content: str):
-    """Insert a new section into the Word document line by line."""
+    """Insert a new section into a fresh copy of the Word document."""
+    doc = Document(TEMPLATE_PATH)  # Now fresh per request
     doc.add_page_break()
     doc.add_heading(title, level=1)
     for line in content.strip().splitlines():
@@ -55,32 +48,71 @@ def insert_section(title: str, content: str):
     doc.save(OUTPUT_PATH)
     logger.info(f"Inserted section: {title} → saved to {OUTPUT_PATH}")
 
-@app.post("/generate_risk_assessment")
+@app.post(
+    "/generate_risk_assessment",
+    response_class=FileResponse,
+    responses={
+        200: {
+            "content": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document": {}},
+            "description": "Risk Assessment document"
+        }
+    }
+)
 async def generate_risk_assessment(input: SectionInput):
     try:
         logger.info(f"Risk Assessment content length: {len(input.content)} characters")
         insert_section("Risk Assessment", input.content)
-        return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        return FileResponse(
+            OUTPUT_PATH,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename="risk_assessment.docx"
+        )
     except Exception as e:
         logger.error(f"Error inserting Risk Assessment: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-@app.post("/generate_sequence")
+@app.post(
+    "/generate_sequence",
+    response_class=FileResponse,
+    responses={
+        200: {
+            "content": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document": {}},
+            "description": "Sequence of Activities document"
+        }
+    }
+)
 async def generate_sequence(input: SectionInput):
     try:
         logger.info(f"Sequence content length: {len(input.content)} characters")
         insert_section("Sequence of Activities", input.content)
-        return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        return FileResponse(
+            OUTPUT_PATH,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename="sequence_of_activities.docx"
+        )
     except Exception as e:
         logger.error(f"Error inserting Sequence: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-@app.post("/generate_method_statement")
+@app.post(
+    "/generate_method_statement",
+    response_class=FileResponse,
+    responses={
+        200: {
+            "content": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document": {}},
+            "description": "Method Statement document"
+        }
+    }
+)
 async def generate_method_statement(input: SectionInput):
     try:
         logger.info(f"Method Statement content length: {len(input.content)} characters")
         insert_section("Method Statement", input.content)
-        return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        return FileResponse(
+            OUTPUT_PATH,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename="method_statement.docx"
+        )
     except Exception as e:
         logger.error(f"Error inserting Method Statement: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
