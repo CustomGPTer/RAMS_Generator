@@ -47,10 +47,6 @@ app.add_middleware(
 # Enable GZip compression for large text payloads
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Logging setup
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("rams-generator")
-
 # Pydantic model for input validation
 class SectionInput(BaseModel):
     content: str
