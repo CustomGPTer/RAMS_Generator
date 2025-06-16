@@ -25,6 +25,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+from starlette.middleware.gzip import GZipMiddleware
+
+# Enable GZip compression for large text payloads
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
