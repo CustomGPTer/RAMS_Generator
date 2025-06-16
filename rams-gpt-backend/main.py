@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, Form, Body
+from fastapi import FastAPI, Body
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from docx import Document
@@ -10,7 +10,11 @@ TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
 OUTPUT_PATH = os.getenv("OUTPUT_PATH", "output/completed_rams.docx")
 
 # Init FastAPI app
-app = FastAPI(title="C2V+ RAMS Generator", description="Appends sections to a master Word RAMS template cumulatively.", version="1.0.0")
+app = FastAPI(
+    title="C2V+ RAMS Generator",
+    description="Appends sections to a master Word RAMS template cumulatively.",
+    version="1.0.0"
+)
 
 # Optional: Enable CORS if testing from external UIs
 app.add_middleware(
@@ -34,10 +38,13 @@ except Exception as e:
     raise RuntimeError("Failed to load Word template.")
 
 def insert_section(title: str, content: str):
-    """Insert a new section with heading and content."""
+    """Insert a new section into the Word document line by line."""
     doc.add_page_break()
     doc.add_heading(title, level=1)
-    doc.add_paragraph(content)
+
+    for line in content.strip().splitlines():
+        doc.add_paragraph(line.strip())
+
     doc.save(OUTPUT_PATH)
     logger.info(f"Inserted section: {title} → saved to {OUTPUT_PATH}")
 
