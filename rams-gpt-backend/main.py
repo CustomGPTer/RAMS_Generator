@@ -7,6 +7,10 @@ import os
 import logging
 from starlette.middleware.gzip import GZipMiddleware
 
+# Logging setup (MUST be before logger is used)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("rams-generator")
+
 # Environment paths
 TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
 OUTPUT_PATH = os.getenv("OUTPUT_PATH", "output/completed_rams.docx")
@@ -15,7 +19,7 @@ OUTPUT_PATH = os.getenv("OUTPUT_PATH", "output/completed_rams.docx")
 OUTPUT_DIR = os.path.dirname(OUTPUT_PATH)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Optional debug write check
+# Optional debug write check (logger now works here)
 try:
     test_path = os.path.join(OUTPUT_DIR, "test_write.txt")
     with open(test_path, "w") as f:
