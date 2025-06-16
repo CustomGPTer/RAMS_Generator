@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: C2V+ RAMS Generator
   description: Generates a site-specific RAMS document in sections using a Word template and 20 tailored inputs. Used for United Utilities projects under C2V+.
-  version: 1.1.0
+  version: 1.1.1
 
 servers:
   - url: https://rams-gpt-backend.onrender.com
@@ -82,3 +82,4 @@ paths:
               schema:
                 type: string
                 format: binary
+
