@@ -6,12 +6,16 @@ from docx import Document
 import os
 import logging
 from starlette.middleware.gzip import GZipMiddleware
+from dotenv import load_dotenv
 
-# Logging setup (MUST be before logger is used)
+# Load .env file if present
+load_dotenv()
+
+# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rams-generator")
 
-# Environment paths
+# Paths from environment or defaults
 TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
 OUTPUT_PATH = os.getenv("OUTPUT_PATH", "output/completed_rams.docx")
 
@@ -19,23 +23,22 @@ OUTPUT_PATH = os.getenv("OUTPUT_PATH", "output/completed_rams.docx")
 OUTPUT_DIR = os.path.dirname(OUTPUT_PATH)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Optional debug write check
+# Optional write test
 try:
-    test_path = os.path.join(OUTPUT_DIR, "test_write.txt")
-    with open(test_path, "w") as f:
+    with open(os.path.join(OUTPUT_DIR, "test_write.txt"), "w") as f:
         f.write("RAMS generator write check")
-    logger.info(f"Write check passed: {test_path}")
-except Exception as write_err:
-    logger.error(f"WRITE ERROR: Cannot write to {OUTPUT_DIR}: {write_err}")
+    logger.info("Write check passed.")
+except Exception as e:
+    logger.error(f"WRITE ERROR: {e}")
 
-# Init FastAPI app
+# FastAPI app
 app = FastAPI(
     title="C2V+ RAMS Generator",
-    description="Appends sections to a master Word RAMS template cumulatively.",
+    description="Replaces placeholders in a Word RAMS template with site-specific content.",
     version="1.0.0"
 )
 
-# Enable CORS
+# Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -43,65 +46,110 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Enable GZip compression
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Health check route
+# Health check
 @app.get("/")
 async def root():
     logger.info("Health check ping received")
     return {"message": "RAMS Generator is running"}
 
-# Input model
+@app.head("/")
+async def root_head():
+    return {"message": "RAMS Generator is running"}
+
+# Pydantic model
 class SectionInput(BaseModel):
     content: str
 
-# Insert section function
-def insert_section(title: str, content: str):
-    """Append a section to the existing RAMS output document."""
-    doc = Document(OUTPUT_PATH if os.path.exists(OUTPUT_PATH) else TEMPLATE_PATH)
-    doc.add_page_break()
-    doc.add_heading(title, level=1)
-    for line in content.strip().splitlines():
-        doc.add_paragraph(line.strip())
-    doc.save(OUTPUT_PATH)
-    logger.info(f"Inserted section: {title} → saved to {OUTPUT_PATH}")
+# Function to insert Risk Assessment table content (replaces row in template)
+def insert_risk_assessment_table(content: str):
+    doc_path = OUTPUT_PATH if os.path.exists(OUTPUT_PATH) else TEMPLATE_PATH
+    doc = Document(doc_path)
 
-@app.post("/generate_risk_assessment", response_class=FileResponse)
+    found = False
+    row_index = None
+
+    for table in doc.tables:
+        for i, row in enumerate(table.rows):
+            if "Insert hazards here" in row.cells[1].text:
+                row_index = i
+                found = True
+                break
+        if found:
+            target_table = table
+            break
+
+    if not found:
+        raise ValueError("Could not find the risk assessment placeholder row.")
+
+    # Remove placeholder row
+    tbl = target_table._tbl
+    tbl.remove(target_table.rows[row_index]._tr)
+
+    # Add content rows
+    lines = content.strip().splitlines()
+    for index, line in enumerate(lines, start=1):
+        cols = line.split("\t")
+        new_row = target_table.add_row().cells
+        new_row[0].text = str(index)  # Auto-number
+        for j in range(min(len(cols), 6)):
+            new_row[j + 1].text = cols[j].strip()
+
+    doc.save(OUTPUT_PATH)
+    logger.info("Inserted formatted Risk Assessment rows.")
+
+# Function to replace body text placeholders (Sequence and Method)
+def insert_section_by_placeholder(placeholder: str, content: str):
+    doc_path = OUTPUT_PATH if os.path.exists(OUTPUT_PATH) else TEMPLATE_PATH
+    doc = Document(doc_path)
+
+    found = False
+    for para in doc.paragraphs:
+        if placeholder in para.text:
+            para.text = content.strip()
+            found = True
+            break
+
+    if not found:
+        raise ValueError(f"Placeholder '{placeholder}' not found in the template.")
+
+    doc.save(OUTPUT_PATH)
+    logger.info(f"Replaced placeholder: {placeholder}")
+
+# API endpoints
+@app.post("/generate_risk_assessment")
 async def generate_risk_assessment(input: SectionInput):
     try:
-        logger.info(f"Risk Assessment content length: {len(input.content)} characters")
-        insert_section("Risk Assessment", input.content)
+        insert_risk_assessment_table(input.content)
         return FileResponse(OUTPUT_PATH,
                             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            filename="risk_assessment.docx")
+                            filename="completed_rams.docx")
     except Exception as e:
-        logger.error(f"Error inserting Risk Assessment: {e}")
+        logger.error(f"Risk assessment error: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-@app.post("/generate_sequence", response_class=FileResponse)
+@app.post("/generate_sequence")
 async def generate_sequence(input: SectionInput):
     try:
-        logger.info(f"Sequence content length: {len(input.content)} characters")
-        insert_section("Sequence of Activities", input.content)
+        insert_section_by_placeholder("[Enter Sequence of Activities Here]", input.content)
         return FileResponse(OUTPUT_PATH,
                             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            filename="sequence_of_activities.docx")
+                            filename="completed_rams.docx")
     except Exception as e:
-        logger.error(f"Error inserting Sequence: {e}")
+        logger.error(f"Sequence section error: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-@app.post("/generate_method_statement", response_class=FileResponse)
+@app.post("/generate_method_statement")
 async def generate_method_statement(input: SectionInput):
     try:
-        logger.info(f"Method Statement content length: {len(input.content)} characters")
-        insert_section("Method Statement", input.content)
+        insert_section_by_placeholder("[Enter Method Statement Here]", input.content)
         return FileResponse(OUTPUT_PATH,
                             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            filename="method_statement.docx")
+                            filename="completed_rams.docx")
     except Exception as e:
-        logger.error(f"Error inserting Method Statement: {e}")
+        logger.error(f"Method Statement error: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 
