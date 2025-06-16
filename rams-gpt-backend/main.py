@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Body
+from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from docx import Document
 import os
 import logging
@@ -16,7 +17,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Optional: Enable CORS if testing from external UIs
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,42 +38,43 @@ except Exception as e:
     logger.error(f"Error loading template: {e}")
     raise RuntimeError("Failed to load Word template.")
 
+# Pydantic model for input validation
+class SectionInput(BaseModel):
+    content: str
+
 def insert_section(title: str, content: str):
     """Insert a new section into the Word document line by line."""
     doc.add_page_break()
     doc.add_heading(title, level=1)
-
     for line in content.strip().splitlines():
         doc.add_paragraph(line.strip())
-
     doc.save(OUTPUT_PATH)
     logger.info(f"Inserted section: {title} → saved to {OUTPUT_PATH}")
 
 @app.post("/generate_risk_assessment")
-async def generate_risk_assessment(content: str = Body(...)):
+async def generate_risk_assessment(input: SectionInput):
     try:
-        insert_section("Risk Assessment", content)
+        insert_section("Risk Assessment", input.content)
         return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     except Exception as e:
         logger.error(f"Error inserting Risk Assessment: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/generate_sequence")
-async def generate_sequence(content: str = Body(...)):
+async def generate_sequence(input: SectionInput):
     try:
-        insert_section("Sequence of Activities", content)
+        insert_section("Sequence of Activities", input.content)
         return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     except Exception as e:
         logger.error(f"Error inserting Sequence: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/generate_method_statement")
-async def generate_method_statement(content: str = Body(...)):
+async def generate_method_statement(input: SectionInput):
     try:
-        insert_section("Method Statement", content)
+        insert_section("Method Statement", input.content)
         return FileResponse(OUTPUT_PATH, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     except Exception as e:
         logger.error(f"Error inserting Method Statement: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
-
 
