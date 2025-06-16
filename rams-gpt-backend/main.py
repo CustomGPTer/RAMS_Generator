@@ -19,7 +19,7 @@ OUTPUT_PATH = os.getenv("OUTPUT_PATH", "output/completed_rams.docx")
 OUTPUT_DIR = os.path.dirname(OUTPUT_PATH)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Optional debug write check (logger now works here)
+# Optional debug write check
 try:
     test_path = os.path.join(OUTPUT_DIR, "test_write.txt")
     with open(test_path, "w") as f:
@@ -44,16 +44,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Enable GZip compression for large text payloads
+# Enable GZip compression
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Pydantic model for input validation
+# Health check route
+@app.get("/")
+async def root():
+    logger.info("Health check ping received")
+    return {"message": "RAMS Generator is running"}
+
+# Input model
 class SectionInput(BaseModel):
     content: str
 
+# Insert section function
 def insert_section(title: str, content: str):
-    """Insert a new section into a fresh copy of the Word document."""
-    doc = Document(TEMPLATE_PATH)  # Now fresh per request
+    """Append a section to the existing RAMS output document."""
+    doc = Document(OUTPUT_PATH if os.path.exists(OUTPUT_PATH) else TEMPLATE_PATH)
     doc.add_page_break()
     doc.add_heading(title, level=1)
     for line in content.strip().splitlines():
@@ -61,72 +68,40 @@ def insert_section(title: str, content: str):
     doc.save(OUTPUT_PATH)
     logger.info(f"Inserted section: {title} → saved to {OUTPUT_PATH}")
 
-@app.post(
-    "/generate_risk_assessment",
-    response_class=FileResponse,
-    responses={
-        200: {
-            "content": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document": {}},
-            "description": "Risk Assessment document"
-        }
-    }
-)
+@app.post("/generate_risk_assessment", response_class=FileResponse)
 async def generate_risk_assessment(input: SectionInput):
     try:
         logger.info(f"Risk Assessment content length: {len(input.content)} characters")
         insert_section("Risk Assessment", input.content)
-        return FileResponse(
-            OUTPUT_PATH,
-            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            filename="risk_assessment.docx"
-        )
+        return FileResponse(OUTPUT_PATH,
+                            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            filename="risk_assessment.docx")
     except Exception as e:
         logger.error(f"Error inserting Risk Assessment: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-@app.post(
-    "/generate_sequence",
-    response_class=FileResponse,
-    responses={
-        200: {
-            "content": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document": {}},
-            "description": "Sequence of Activities document"
-        }
-    }
-)
+@app.post("/generate_sequence", response_class=FileResponse)
 async def generate_sequence(input: SectionInput):
     try:
         logger.info(f"Sequence content length: {len(input.content)} characters")
         insert_section("Sequence of Activities", input.content)
-        return FileResponse(
-            OUTPUT_PATH,
-            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            filename="sequence_of_activities.docx"
-        )
+        return FileResponse(OUTPUT_PATH,
+                            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            filename="sequence_of_activities.docx")
     except Exception as e:
         logger.error(f"Error inserting Sequence: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-@app.post(
-    "/generate_method_statement",
-    response_class=FileResponse,
-    responses={
-        200: {
-            "content": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document": {}},
-            "description": "Method Statement document"
-        }
-    }
-)
+@app.post("/generate_method_statement", response_class=FileResponse)
 async def generate_method_statement(input: SectionInput):
     try:
         logger.info(f"Method Statement content length: {len(input.content)} characters")
         insert_section("Method Statement", input.content)
-        return FileResponse(
-            OUTPUT_PATH,
-            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            filename="method_statement.docx"
-        )
+        return FileResponse(OUTPUT_PATH,
+                            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            filename="method_statement.docx")
     except Exception as e:
         logger.error(f"Error inserting Method Statement: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
+
 
