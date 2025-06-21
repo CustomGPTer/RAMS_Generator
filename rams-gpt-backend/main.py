@@ -5,29 +5,28 @@ from fastapi.templating import Jinja2Templates
 from docx import Document
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+from openai._httpx_client import AsyncHttpxClientWrapper
+from httpx import AsyncClient
 import os
 import asyncio
 from io import BytesIO
 
-# 🔧 Disable Render-injected proxy variables to prevent OpenAI crash
-for var in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]:
-    os.environ.pop(var, None)
-
-# Load .env variables
+# Load environment variables
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
 TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
 
-# ✅ Safe OpenAI client
-client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+# ✅ Disable proxy injection from host environments like Render
+custom_http_client = AsyncHttpxClientWrapper(AsyncClient(proxies=None))
+client = AsyncOpenAI(api_key=OPENAI_API_KEY, http_client=custom_http_client)
 
-# FastAPI setup
+# FastAPI app setup
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# RAMS session state (not persisted)
+# Session state (in memory)
 chat_state = {}
 
 @app.get("/", response_class=HTMLResponse)
@@ -172,6 +171,7 @@ async def generate_rams(session_id: str = Form(...)):
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 
 
