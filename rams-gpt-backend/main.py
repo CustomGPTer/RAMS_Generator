@@ -17,8 +17,11 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
 TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
 
-# Setup OpenAI client
-client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+# ✅ SAFE AsyncOpenAI client that avoids proxy error
+client = AsyncOpenAI(
+    api_key=OPENAI_API_KEY,
+    base_url="https://api.openai.com/v1"
+)
 
 # FastAPI app setup
 app = FastAPI()
@@ -170,7 +173,6 @@ async def generate_rams(session_id: str = Form(...)):
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
-
 
 
 
