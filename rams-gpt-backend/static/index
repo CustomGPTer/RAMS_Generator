@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RAMS Generator</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 40px;
+      max-width: 700px;
+      margin: auto;
+    }
+    h1 {
+      text-align: center;
+    }
+    .question {
+      margin-bottom: 15px;
+    }
+    textarea {
+      width: 100%;
+      height: 40px;
+      font-size: 14px;
+      padding: 5px;
+    }
+    button {
+      margin-top: 20px;
+      padding: 10px 20px;
+      font-size: 16px;
+      display: block;
+      margin-left: auto;
+      margin-right: auto;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>RAMS Generator</h1>
+
+  <form id="ramsForm">
+    <div id="questions"></div>
+    <button type="submit">Generate RAMS (.docx)</button>
+  </form>
+
+  <script>
+    const questionsContainer = document.getElementById('questions');
+    for (let i = 1; i <= 20; i++) {
+      const div = document.createElement('div');
+      div.className = 'question';
+      div.innerHTML = `
+        <label for="answer${i}">Answer ${i}</label>
+        <textarea id="answer${i}" name="answer${i}" required></textarea>
+      `;
+      questionsContainer.appendChild(div);
+    }
+
+    document.getElementById('ramsForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+
+      const answers = [];
+      for (let i = 1; i <= 20; i++) {
+        const val = document.getElementById(`answer${i}`).value.trim();
+        if (!val) {
+          alert(`Please fill in answer ${i}`);
+          return;
+        }
+        answers.push(val);
+      }
+
+      try {
+        const response = await fetch('/generate_rams', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ answers })
+        });
+
+        if (!response.ok) {
+          const err = await response.json();
+          alert(`Error: ${err.error}`);
+          return;
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'completed_rams.docx';
+        a.click();
+        window.URL.revokeObjectURL(url);
+      } catch (error) {
+        alert('Something went wrong. Please try again later.');
+        console.error(error);
+      }
+    });
+  </script>
+
+</body>
+</html>
