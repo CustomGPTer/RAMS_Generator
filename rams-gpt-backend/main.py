@@ -1,15 +1,14 @@
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
 from docx import Document
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+from openai._types import NotGiven
 import os
 import asyncio
 from io import BytesIO
-import logging
 
 # Load environment variables
 load_dotenv()
@@ -17,10 +16,11 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
 TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
 
-# ✅ SAFE AsyncOpenAI client that avoids proxy error
+# ✅ Safe OpenAI async client (prevents proxy injection crash)
 client = AsyncOpenAI(
     api_key=OPENAI_API_KEY,
-    base_url="https://api.openai.com/v1"
+    base_url="https://api.openai.com/v1",
+    http_client=NotGiven
 )
 
 # FastAPI app setup
@@ -28,7 +28,7 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Temporary chat state (cleared on refresh)
+# Chat state (not persistent)
 chat_state = {}
 
 @app.get("/", response_class=HTMLResponse)
