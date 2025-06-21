@@ -9,21 +9,25 @@ import os
 import asyncio
 from io import BytesIO
 
-# Load environment variables
+# 🔧 Disable Render-injected proxy variables to prevent OpenAI crash
+for var in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]:
+    os.environ.pop(var, None)
+
+# Load .env variables
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
 TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
 
-# ✅ Safe OpenAI client without proxy crash
+# ✅ Safe OpenAI client
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
-# FastAPI app setup
+# FastAPI setup
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# In-memory chat state
+# RAMS session state (not persisted)
 chat_state = {}
 
 @app.get("/", response_class=HTMLResponse)
@@ -168,5 +172,6 @@ async def generate_rams(session_id: str = Form(...)):
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 
