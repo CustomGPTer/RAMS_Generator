@@ -5,8 +5,7 @@ from fastapi.templating import Jinja2Templates
 from docx import Document
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from openai._httpx_client import AsyncHttpxClientWrapper
-from httpx import AsyncClient
+import httpx
 import os
 import asyncio
 from io import BytesIO
@@ -17,16 +16,16 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
 TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
 
-# ✅ Disable proxy injection from host environments like Render
-custom_http_client = AsyncHttpxClientWrapper(AsyncClient(proxies=None))
-client = AsyncOpenAI(api_key=OPENAI_API_KEY, http_client=custom_http_client)
+# ✅ SAFE: Disable all proxy settings using clean public httpx interface
+httpx_client = httpx.AsyncClient(proxies=None)
+client = AsyncOpenAI(api_key=OPENAI_API_KEY, http_client=httpx_client)
 
 # FastAPI app setup
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Session state (in memory)
+# In-memory state
 chat_state = {}
 
 @app.get("/", response_class=HTMLResponse)
@@ -160,7 +159,6 @@ async def generate_rams(session_id: str = Form(...)):
         buffer.seek(0)
         filename = f"rams_{session_id}.docx"
 
-        # Clean up session
         del chat_state[session_id]
 
         return Response(
@@ -171,6 +169,7 @@ async def generate_rams(session_id: str = Form(...)):
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 
 
