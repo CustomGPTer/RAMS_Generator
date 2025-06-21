@@ -1,199 +1,173 @@
-from fastapi import FastAPI, Response
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request, Form
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from docx import Document
 from dotenv import load_dotenv
 import openai
 import os
-import logging
 import asyncio
 from io import BytesIO
+import logging
 
-# Load .env variables
+# Load .env values
 load_dotenv()
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("rams-generator")
-
-# Load environment variables
-TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
-PROMPT_PATH = os.getenv("PROMPT_PATH", "prompts/system_prompt.txt")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai.api_key = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
-TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
-MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4300"))
 
-openai.api_key = OPENAI_API_KEY
+TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
 
-# Init app
-app = FastAPI(
-    title="C2V+ RAMS Generator",
-    description="Generates RAMS documents from 20 user answers using OpenAI",
-    version="1.2.0"
-)
+# FastAPI app setup
+app = FastAPI()
+templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# CORS and compression
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"]
-)
+# RAMS chat state (not persistent – resets on refresh)
+chat_state = {}
 
-# Models
-class SectionInput(BaseModel):
-    content: str
+@app.get("/", response_class=HTMLResponse)
+async def homepage(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
-class FullInput(BaseModel):
-    answers: list[str]
+@app.get("/rams", response_class=HTMLResponse)
+async def rams_page(request: Request):
+    return templates.TemplateResponse("rams_chat.html", {"request": request})
 
-# Helpers
-def insert_risk_assessment_table(doc: Document, content: str):
-    for table in doc.tables:
-        for i, row in enumerate(table.rows):
-            if "Insert hazards here" in row.cells[1].text:
-                table._tbl.remove(row._tr)
-                lines = [line.strip() for line in content.strip().splitlines() if line.strip()]
-                for index, line in enumerate(lines, start=1):
-                    cols = line.split("\t")
-                    new_cells = table.add_row().cells
-                    new_cells[0].text = str(index)
-                    for j in range(min(len(cols), 6)):
-                        new_cells[j + 1].text = cols[j].strip()
-                return
-    raise ValueError("Risk assessment placeholder not found")
-
-def insert_section_by_placeholder(doc: Document, placeholder: str, content: str):
-    for para in doc.paragraphs:
-        if placeholder in para.text:
-            style = para.style
-            parts = content.strip().split("\n\n") if "\n\n" in content else content.strip().split("\n")
-            for part in parts:
-                if part.strip():
-                    new_para = para.insert_paragraph_before(part.strip())
-                    new_para.style = style
-            para._element.getparent().remove(para._element)
-            return
-    raise ValueError(f"Placeholder '{placeholder}' not found")
-
-# Endpoints
-@app.get("/")
-async def serve_form():
-    return FileResponse("static/index.html")
-
-@app.post("/generate_rams")
-async def generate_full_rams(input: FullInput):
-    if len(input.answers) != 20:
-        return JSONResponse(status_code=400, content={"error": "Exactly 20 answers are required."})
-
+@app.post("/rams_chat/start")
+async def start_chat(task: str = Form(...)):
     try:
-        # Load and trim system prompt
-        system_prompt = ""
-        if os.path.exists(PROMPT_PATH):
-            with open(PROMPT_PATH, "r") as f:
-                system_prompt = f.read().strip().split("RAMS Section Submission Logic")[0].strip()
+        messages = [
+            {"role": "system", "content": "You are a construction safety AI. Generate exactly 20 very specific RAMS questions based only on the task provided. Do not add intro or explanation. Return only a numbered list of the questions."},
+            {"role": "user", "content": f"The task is: {task}"}
+        ]
+        response = await openai.ChatCompletion.acreate(
+            model=OPENAI_MODEL,
+            messages=messages,
+            temperature=0.4
+        )
+        questions_raw = response.choices[0].message.content.strip()
+        questions = [q.split('. ', 1)[-1].strip() for q in questions_raw.split('\n') if q.strip()]
+        if len(questions) != 20:
+            return JSONResponse(status_code=500, content={"error": "GPT did not return exactly 20 questions."})
+        session_id = os.urandom(6).hex()
+        chat_state[session_id] = {
+            "task": task,
+            "questions": questions,
+            "answers": []
+        }
+        return {"session_id": session_id, "questions": questions}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
-        answers_text = "\n".join(f"{i+1}. {a}" for i, a in enumerate(input.answers))
+@app.post("/rams_chat/answer")
+async def submit_answer(session_id: str = Form(...), answer: str = Form(...)):
+    try:
+        if session_id not in chat_state:
+            return JSONResponse(status_code=400, content={"error": "Session expired. Please refresh and start again."})
+        state = chat_state[session_id]
+        state["answers"].append(answer)
+        next_index = len(state["answers"])
+        if next_index >= 20:
+            return {"complete": True}
+        return {"complete": False, "next_question": state["questions"][next_index]}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.post("/rams_chat/generate")
+async def generate_rams(session_id: str = Form(...)):
+    try:
+        if session_id not in chat_state or len(chat_state[session_id]["answers"]) != 20:
+            return JSONResponse(status_code=400, content={"error": "Incomplete session or session expired."})
+
+        task = chat_state[session_id]["task"]
+        answers = chat_state[session_id]["answers"]
+
+        answers_list = "\n".join([f"{i+1}. {a}" for i, a in enumerate(answers)])
 
         prompts = {
             "risk": (
-                f"Below are the 20 site-specific answers:\n{answers_text}\n\n"
-                "Now generate the **Risk Assessment Table** only, using tab-separated values for each row: "
-                "Hazard<TAB>Persons at Risk<TAB>Undesired Event<TAB>Control Measures<TAB>Actioned By. "
-                "Provide at least 20 hazards. No numbers or formatting."
+                f"Based on this task: {task}\n\nAnd these answers:\n{answers_list}\n\n"
+                "Generate a Risk Assessment Table with at least 20 hazards. For each hazard, return tab-separated values in this order:\n"
+                "Hazard\tPersons at Risk\tUndesired Event\tControl Measures\tActioned By\nReturn only one hazard per line."
             ),
             "sequence": (
-                f"Using the same 20 answers above, generate a **Sequence of Activities** (minimum 600 words). "
-                f"Cover start-to-finish in multiple paragraphs."
+                f"Task: {task}\n\nAnswers:\n{answers_list}\n\nGenerate the Sequence of Activities section. Minimum 600 words. Use multiple paragraphs."
             ),
             "method": (
-                f"Using the same 20 answers, generate a **Method Statement** (minimum 750 words). "
-                f"Include: Scope of Works, Roles and Responsibilities, Hold Points, Operated Plant, Tools and Equipment, "
-                f"Materials, PPE, Rescue Plan (5 scenarios), Site Standards, CESWI Clauses, Quality Control, Environment."
+                f"Task: {task}\n\nAnswers:\n{answers_list}\n\nGenerate the Method Statement section. Minimum 750 words. Include:\n"
+                "Scope, Roles and Responsibilities, PPE, Rescue Plan, CESWI Clauses, Hold Points, Tools and Equipment, Materials, Quality, Environmental Controls."
             )
         }
 
-        async def generate_section(prompt: str):
+        async def get_section(prompt):
             result = await openai.ChatCompletion.acreate(
                 model=OPENAI_MODEL,
-                temperature=TEMPERATURE,
-                max_tokens=MAX_TOKENS,
-                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3
             )
             return result.choices[0].message.content.strip()
 
-        risk_task = generate_section(prompts["risk"])
-        sequence_task = generate_section(prompts["sequence"])
-        method_task = generate_section(prompts["method"])
+        risk_task = get_section(prompts["risk"])
+        seq_task = get_section(prompts["sequence"])
+        method_task = get_section(prompts["method"])
 
-        risk_content, sequence_content, method_content = await asyncio.gather(risk_task, sequence_task, method_task)
+        risk, sequence, method = await asyncio.gather(risk_task, seq_task, method_task)
 
         doc = Document(TEMPLATE_PATH)
-        insert_risk_assessment_table(doc, risk_content)
-        insert_section_by_placeholder(doc, "[Enter Sequence of Activities Here]", sequence_content)
-        insert_section_by_placeholder(doc, "[Enter Method Statement Here]", method_content)
+
+        # Insert Risk Assessment Table
+        for table in doc.tables:
+            for i, row in enumerate(table.rows):
+                if "Insert hazards here" in row.cells[1].text:
+                    table._tbl.remove(row._tr)
+                    for idx, line in enumerate(risk.strip().splitlines(), 1):
+                        cols = line.split('\t')
+                        row_cells = table.add_row().cells
+                        row_cells[0].text = str(idx)
+                        for j in range(min(5, len(cols))):
+                            row_cells[j+1].text = cols[j].strip()
+                    break
+
+        # Insert Sequence
+        for para in doc.paragraphs:
+            if "[Enter Sequence of Activities Here]" in para.text:
+                para.text = ""
+                for line in sequence.strip().split("\n"):
+                    if line.strip():
+                        new_para = para.insert_paragraph_before(line.strip())
+                        new_para.style = para.style
+                para._element.getparent().remove(para._element)
+                break
+
+        # Insert Method Statement
+        for para in doc.paragraphs:
+            if "[Enter Method Statement Here]" in para.text:
+                para.text = ""
+                for line in method.strip().split("\n"):
+                    if line.strip():
+                        new_para = para.insert_paragraph_before(line.strip())
+                        new_para.style = para.style
+                para._element.getparent().remove(para._element)
+                break
 
         buffer = BytesIO()
         doc.save(buffer)
         buffer.seek(0)
+        filename = f"rams_{session_id}.docx"
 
-        return Response(content=buffer.getvalue(),
-                        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        headers={"Content-Disposition": "attachment; filename=completed_rams.docx"})
+        # Clean up session
+        del chat_state[session_id]
 
-    except Exception as e:
-        logger.error(f"Error generating RAMS: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return Response(
+            content=buffer.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
 
-# Optional legacy endpoints (not needed for the HTML form, but safe to keep)
-@app.post("/generate_risk_assessment")
-async def generate_risk_assessment(input: SectionInput):
-    try:
-        doc = Document(TEMPLATE_PATH)
-        insert_risk_assessment_table(doc, input.content)
-        buffer = BytesIO()
-        doc.save(buffer)
-        buffer.seek(0)
-        return Response(content=buffer.getvalue(),
-                        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        headers={"Content-Disposition": "attachment; filename=completed_rams.docx"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-@app.post("/generate_sequence")
-async def generate_sequence(input: SectionInput):
-    try:
-        doc = Document(TEMPLATE_PATH)
-        insert_section_by_placeholder(doc, "[Enter Sequence of Activities Here]", input.content)
-        buffer = BytesIO()
-        doc.save(buffer)
-        buffer.seek(0)
-        return Response(content=buffer.getvalue(),
-                        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        headers={"Content-Disposition": "attachment; filename=completed_rams.docx"})
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-@app.post("/generate_method_statement")
-async def generate_method_statement(input: SectionInput):
-    try:
-        doc = Document(TEMPLATE_PATH)
-        insert_section_by_placeholder(doc, "[Enter Method Statement Here]", input.content)
-        buffer = BytesIO()
-        doc.save(buffer)
-        buffer.seek(0)
-        return Response(content=buffer.getvalue(),
-                        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        headers={"Content-Disposition": "attachment; filename=completed_rams.docx"})
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-# Mount static folder for form hosting
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 
