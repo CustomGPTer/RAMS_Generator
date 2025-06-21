@@ -1,29 +1,31 @@
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from docx import Document
 from dotenv import load_dotenv
-import openai
+from openai import AsyncOpenAI
 import os
 import asyncio
 from io import BytesIO
 import logging
 
-# Load .env values
+# Load environment variables
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
-
 TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
+
+# Setup OpenAI client
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # FastAPI app setup
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# RAMS chat state (not persistent – resets on refresh)
+# Temporary chat state (cleared on refresh)
 chat_state = {}
 
 @app.get("/", response_class=HTMLResponse)
@@ -38,17 +40,17 @@ async def rams_page(request: Request):
 async def start_chat(task: str = Form(...)):
     try:
         messages = [
-            {"role": "system", "content": "You are a construction safety AI. Generate exactly 20 very specific RAMS questions based only on the task provided. Do not add intro or explanation. Return only a numbered list of the questions."},
+            {
+                "role": "system",
+                "content": "You are a construction safety AI. Generate exactly 20 very specific RAMS questions based only on the task provided. Do not add intro or explanation. Return only a numbered list of the questions."
+            },
             {"role": "user", "content": f"The task is: {task}"}
         ]
-        from openai import AsyncOpenAI
-client = AsyncOpenAI()
-
-response = await client.chat.completions.create(
-    model=OPENAI_MODEL,
-    messages=messages,
-    temperature=0.4
-)
+        response = await client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=messages,
+            temperature=0.4
+        )
         questions_raw = response.choices[0].message.content.strip()
         questions = [q.split('. ', 1)[-1].strip() for q in questions_raw.split('\n') if q.strip()]
         if len(questions) != 20:
@@ -85,7 +87,6 @@ async def generate_rams(session_id: str = Form(...)):
 
         task = chat_state[session_id]["task"]
         answers = chat_state[session_id]["answers"]
-
         answers_list = "\n".join([f"{i+1}. {a}" for i, a in enumerate(answers)])
 
         prompts = {
@@ -104,7 +105,7 @@ async def generate_rams(session_id: str = Form(...)):
         }
 
         async def get_section(prompt):
-            result = await openai.ChatCompletion.acreate(
+            result = await client.chat.completions.create(
                 model=OPENAI_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3
@@ -114,7 +115,6 @@ async def generate_rams(session_id: str = Form(...)):
         risk_task = get_section(prompts["risk"])
         seq_task = get_section(prompts["sequence"])
         method_task = get_section(prompts["method"])
-
         risk, sequence, method = await asyncio.gather(risk_task, seq_task, method_task)
 
         doc = Document(TEMPLATE_PATH)
@@ -132,7 +132,7 @@ async def generate_rams(session_id: str = Form(...)):
                             row_cells[j+1].text = cols[j].strip()
                     break
 
-        # Insert Sequence
+        # Insert Sequence of Activities
         for para in doc.paragraphs:
             if "[Enter Sequence of Activities Here]" in para.text:
                 para.text = ""
@@ -170,6 +170,7 @@ async def generate_rams(session_id: str = Form(...)):
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 
 
