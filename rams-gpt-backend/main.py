@@ -5,7 +5,6 @@ from fastapi.templating import Jinja2Templates
 from docx import Document
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from openai._types import NotGiven
 import os
 import asyncio
 from io import BytesIO
@@ -16,19 +15,15 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
 TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "templates/template_rams.docx")
 
-# ✅ Safe OpenAI async client (prevents proxy injection crash)
-client = AsyncOpenAI(
-    api_key=OPENAI_API_KEY,
-    base_url="https://api.openai.com/v1",
-    http_client=NotGiven
-)
+# ✅ Safe OpenAI client without proxy crash
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # FastAPI app setup
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Chat state (not persistent)
+# In-memory chat state
 chat_state = {}
 
 @app.get("/", response_class=HTMLResponse)
@@ -135,7 +130,7 @@ async def generate_rams(session_id: str = Form(...)):
                             row_cells[j+1].text = cols[j].strip()
                     break
 
-        # Insert Sequence of Activities
+        # Insert Sequence
         for para in doc.paragraphs:
             if "[Enter Sequence of Activities Here]" in para.text:
                 para.text = ""
@@ -173,7 +168,5 @@ async def generate_rams(session_id: str = Form(...)):
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
-
-
 
 
