@@ -1,17 +1,87 @@
 openapi: 3.1.0
 info:
   title: C2V+ RAMS Generator
-  description: Generates a site-specific RAMS document in sections using a Word template and 20 tailored inputs. Used for United Utilities projects under C2V+.
-  version: 1.1.1
+  description: |
+    API for generating Risk Assessment and Method Statement (RAMS) documents using OpenAI.
+    The backend creates a Word document using a template and AI-generated content based on 20 site-specific answers.
+  version: 1.2.0
 
 servers:
-  - url: https://rams-gpt-backend.onrender.com
+  - url: https://your-render-app.onrender.com
+    description: Render-hosted production instance
 
 paths:
+  /:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Service is running
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+    head:
+      summary: Health check (HEAD)
+      responses:
+        '200':
+          description: Service is running
+
+  /generate_rams:
+    post:
+      summary: Generate a complete RAMS Word document
+      operationId: generateFullRams
+      requestBody:
+        description: A list of exactly 20 site-specific answers used to generate RAMS content
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - answers
+              properties:
+                answers:
+                  type: array
+                  items:
+                    type: string
+                  minItems: 20
+                  maxItems: 20
+                  description: List of 20 string answers to task-specific questions
+      responses:
+        '200':
+          description: Completed RAMS Word document
+          content:
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Bad Request (wrong number of answers or invalid input)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '500':
+          description: Server error during document generation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
   /generate_risk_assessment:
     post:
+      summary: Insert risk assessment content into the Word template
       operationId: generateRiskAssessment
-      summary: Append Risk Assessment section to the master RAMS document
       requestBody:
         required: true
         content:
@@ -23,20 +93,29 @@ paths:
               properties:
                 content:
                   type: string
-                  description: Risk Assessment section text
+                  description: Tab-separated values (Hazard, Persons at Risk, Event, Control Measures, Actioned By)
       responses:
         '200':
-          description: Updated .docx with Risk Assessment section
+          description: Updated Word document with risk assessment
           content:
             application/vnd.openxmlformats-officedocument.wordprocessingml.document:
               schema:
                 type: string
                 format: binary
+        '500':
+          description: Error inserting risk assessment
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
 
   /generate_sequence:
     post:
+      summary: Insert Sequence of Activities section into Word document
       operationId: generateSequence
-      summary: Append Sequence of Activities section to the master RAMS document
       requestBody:
         required: true
         content:
@@ -48,20 +127,29 @@ paths:
               properties:
                 content:
                   type: string
-                  description: Sequence of Activities section text
+                  description: Full Sequence of Activities section text
       responses:
         '200':
-          description: Updated .docx with Sequence of Activities
+          description: Updated Word document with sequence of activities
           content:
             application/vnd.openxmlformats-officedocument.wordprocessingml.document:
               schema:
                 type: string
                 format: binary
+        '500':
+          description: Error inserting sequence
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
 
   /generate_method_statement:
     post:
+      summary: Insert Method Statement section into Word document
       operationId: generateMethodStatement
-      summary: Append Method Statement section to the master RAMS document
       requestBody:
         required: true
         content:
@@ -73,13 +161,44 @@ paths:
               properties:
                 content:
                   type: string
-                  description: Method Statement section text
+                  description: Full Method Statement section text
       responses:
         '200':
-          description: Final .docx with Method Statement added
+          description: Updated Word document with Method Statement
           content:
             application/vnd.openxmlformats-officedocument.wordprocessingml.document:
               schema:
                 type: string
                 format: binary
+        '500':
+          description: Error inserting method statement
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+components:
+  schemas:
+    SectionInput:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+
+    FullInput:
+      type: object
+      required:
+        - answers
+      properties:
+        answers:
+          type: array
+          items:
+            type: string
+          minItems: 20
+          maxItems: 20
 
