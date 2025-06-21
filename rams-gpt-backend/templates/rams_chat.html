@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>RAMS Generator</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>AI RAMS Generator</h1>
+
+    <div id="chat">
+      <div class="message ai">Please describe the task you'd like a RAMS for. Include as much detail as possible.</div>
+    </div>
+
+    <form id="input-form">
+      <input type="text" id="user-input" autocomplete="off" placeholder="Type your task or answer..." />
+      <button type="submit">Send</button>
+    </form>
+  </div>
+
+  <script>
+    let sessionId = null;
+    let currentQuestion = 0;
+    let totalQuestions = 0;
+    let waitingForAnswer = false;
+    let allQuestions = [];
+
+    const form = document.getElementById('input-form');
+    const input = document.getElementById('user-input');
+    const chat = document.getElementById('chat');
+
+    function addMessage(text, sender) {
+      const msg = document.createElement('div');
+      msg.className = 'message ' + sender;
+      msg.textContent = text;
+      chat.appendChild(msg);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const value = input.value.trim();
+      if (!value) return;
+
+      addMessage(value, 'user');
+      input.value = '';
+
+      if (!sessionId) {
+        // First message: task description
+        addMessage('Generating tailored questions...', 'ai');
+        const response = await fetch('/rams_chat/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ task: value })
+        });
+        const data = await response.json();
+        if (data.error) return addMessage("Error: " + data.error, 'ai');
+
+        sessionId = data.session_id;
+        allQuestions = data.questions;
+        totalQuestions = allQuestions.length;
+        currentQuestion = 0;
+        addMessage(allQuestions[currentQuestion], 'ai');
+        waitingForAnswer = true;
+      } else if (waitingForAnswer) {
+        // Send answer
+        const response = await fetch('/rams_chat/answer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ session_id: sessionId, answer: value })
+        });
+        const data = await response.json();
+        if (data.error) return addMessage("Error: " + data.error, 'ai');
+
+        if (data.complete) {
+          addMessage("Generating your RAMS document...", 'ai');
+
+          const downloadResponse = await fetch('/rams_chat/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ session_id: sessionId })
+          });
+
+          const blob = await downloadResponse.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = "RAMS.docx";
+          a.click();
+          window.URL.revokeObjectURL(url);
+
+          addMessage("RAMS download complete. You may refresh the page to start a new task.", 'ai');
+          form.style.display = "none";
+        } else {
+          addMessage(data.next_question, 'ai');
+        }
+      }
+    });
+  </script>
+</body>
+</html>
