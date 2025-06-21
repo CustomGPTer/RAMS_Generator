@@ -41,11 +41,14 @@ async def start_chat(task: str = Form(...)):
             {"role": "system", "content": "You are a construction safety AI. Generate exactly 20 very specific RAMS questions based only on the task provided. Do not add intro or explanation. Return only a numbered list of the questions."},
             {"role": "user", "content": f"The task is: {task}"}
         ]
-        response = await openai.ChatCompletion.acreate(
-            model=OPENAI_MODEL,
-            messages=messages,
-            temperature=0.4
-        )
+        from openai import AsyncOpenAI
+client = AsyncOpenAI()
+
+response = await client.chat.completions.create(
+    model=OPENAI_MODEL,
+    messages=messages,
+    temperature=0.4
+)
         questions_raw = response.choices[0].message.content.strip()
         questions = [q.split('. ', 1)[-1].strip() for q in questions_raw.split('\n') if q.strip()]
         if len(questions) != 20:
