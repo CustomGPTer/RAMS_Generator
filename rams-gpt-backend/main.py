@@ -30,7 +30,7 @@ except ValidationError as e:
     logger.error("Config validation failed: %s", e)
     raise
 
-# Configure OpenAI client (new syntax for openai>=1.0.0)
+# Configure OpenAI client (correct v1.x+ usage)
 client = AsyncOpenAI(api_key=settings.openai_api_key)
 OPENAI_MODEL = settings.openai_model
 
@@ -39,7 +39,7 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# Session storage
+# Session store
 sessions = {}
 sessions_lock = asyncio.Lock()
 SESSION_TTL = 3600  # 1 hour
@@ -70,45 +70,48 @@ async def start_rams(request: Request, task: str = Body(..., embed=True)):
 
     session_id = str(uuid.uuid4())
 
-    system_msg = (
-        "You are an expert in Risk Assessment and Method Statement (RAMS). "
-        "Given a construction task, generate exactly 20 numbered questions covering scope, PPE, methods, rescue plan, tools, training, etc."
+    system_prompt = (
+        "You are an expert in writing construction RAMS. "
+        "Generate exactly 20 numbered and detailed questions needed to complete a RAMS document "
+        "for the following task. Include questions on scope, location, tools, training, PPE, rescue, environment, etc."
     )
-    user_msg = f"Task: {task.strip()}"
+    user_prompt = f"Task: {task.strip()}"
 
     try:
-        gpt = await client.chat.completions.create(
+        gpt_response = await client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
             ],
             temperature=0.0
         )
-        content = gpt.choices[0].message.content.strip()
-        lines = content.splitlines()
+        raw = gpt_response.choices[0].message.content.strip()
+        lines = raw.splitlines()
         questions = [line.strip() for line in lines if line.strip()]
-    except Exception as e:
-        logger.exception("Failed to generate questions")
+        if len(questions) > 20:
+            questions = questions[:20]
+    except Exception:
+        logger.exception("OpenAI question generation failed")
         raise HTTPException(status_code=500, detail="Failed to generate questions.")
 
     if len(questions) < 20:
-        raise HTTPException(status_code=500, detail="Expected 20 questions from OpenAI.")
+        raise HTTPException(status_code=500, detail="OpenAI returned fewer than 20 questions.")
 
     sessions[session_id] = {
         "task": task,
-        "questions": questions[:20],
+        "questions": questions,
         "answers": [],
         "last_active": time.time()
     }
 
-    return JSONResponse(content={"session_id": session_id, "questions": questions[:20]})
+    return JSONResponse({"session_id": session_id, "questions": questions})
 
 @app.post("/rams_chat/answer")
 async def answer_rams(request: Request, answer: str = Body(..., embed=True)):
     session_id = request.cookies.get("session_id")
     if not session_id:
-        raise HTTPException(status_code=400, detail="No session.")
+        raise HTTPException(status_code=400, detail="No active session.")
 
     async with sessions_lock:
         session = sessions.get(session_id)
@@ -123,32 +126,26 @@ async def answer_rams(request: Request, answer: str = Body(..., embed=True)):
         if len(session["answers"]) >= len(session["questions"]):
             return {"complete": True}
 
-        next_question = session["questions"][len(session["answers"])]
-        return {"complete": False, "next_question": next_question}
+        next_q = session["questions"][len(session["answers"])]
+        return {"complete": False, "next_question": next_q}
 
 @app.get("/rams_chat/generate")
 async def generate_doc(request: Request):
     session_id = request.cookies.get("session_id")
     if not session_id:
-        raise HTTPException(status_code=400, detail="No session to generate document.")
+        raise HTTPException(status_code=400, detail="No active session.")
 
     async with sessions_lock:
         session = sessions.get(session_id)
         if not session or len(session["answers"]) < len(session["questions"]):
             raise HTTPException(status_code=400, detail="Incomplete session.")
 
-    qa_pairs = "\n".join([f"Q{i+1}: {q}\nA{i+1}: {a}" for i, (q, a) in enumerate(zip(session["questions"], session["answers"]))])
+    qa_block = "\n".join([f"Q{i+1}: {q}\nA{i+1}: {a}" for i, (q, a) in enumerate(zip(session["questions"], session["answers"]))])
 
     prompts = {
-        "RISK_SECTION": (
-            "You are a RAMS expert. Write the Risk Assessment section focusing on hazards, risks, and controls.\n" + qa_pairs
-        ),
-        "SEQUENCE_SECTION": (
-            "Write a detailed Sequence of Activities for the task based on these Q&As:\n" + qa_pairs
-        ),
-        "METHOD_SECTION": (
-            "Write the Method Statement section, including roles, tools, PPE, hold points, CESWI refs, rescue plan:\n" + qa_pairs
-        )
+        "RISK_SECTION": "Write the Risk Assessment section based on this task and these answers:\n" + qa_block,
+        "SEQUENCE_SECTION": "Write the full Sequence of Activities for the RAMS from this info:\n" + qa_block,
+        "METHOD_SECTION": "Write a full Method Statement using the Q&As including scope, roles, PPE, rescue, CESWI refs:\n" + qa_block
     }
 
     try:
@@ -156,37 +153,34 @@ async def generate_doc(request: Request):
             client.chat.completions.create(
                 model=OPENAI_MODEL,
                 messages=[
-                    {"role": "system", "content": "You are a health and safety RAMS expert."},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": "You are a RAMS writing expert."},
+                    {"role": "user", "content": text}
                 ],
                 temperature=0.0
-            ) for prompt in prompts.values()
+            ) for text in prompts.values()
         ])
-        sections = {
-            key: results[i].choices[0].message.content.strip()
-            for i, key in enumerate(prompts)
-        }
-    except Exception as e:
-        logger.exception("Failed to generate sections")
-        raise HTTPException(status_code=500, detail="Failed to generate RAMS content.")
+        sections = {key: results[i].choices[0].message.content.strip() for i, key in enumerate(prompts)}
+    except Exception:
+        logger.exception("Failed to generate RAMS sections")
+        raise HTTPException(status_code=500, detail="Error generating RAMS content.")
 
     try:
         doc = await asyncio.get_running_loop().run_in_executor(None, Document, settings.template_path)
     except Exception:
-        logger.exception("Template load failed")
-        raise HTTPException(status_code=500, detail="Template error.")
+        logger.exception("Failed to load Word template")
+        raise HTTPException(status_code=500, detail="Document template failed to load.")
 
     for p in doc.paragraphs:
-        for key, val in sections.items():
-            if key in p.text:
-                p.text = p.text.replace(key, val)
+        for tag, text in sections.items():
+            if tag in p.text:
+                p.text = p.text.replace(tag, text)
 
-    for t in doc.tables:
-        for row in t.rows:
+    for table in doc.tables:
+        for row in table.rows:
             for cell in row.cells:
-                for key, val in sections.items():
-                    if key in cell.text:
-                        cell.text = cell.text.replace(key, val)
+                for tag, text in sections.items():
+                    if tag in cell.text:
+                        cell.text = cell.text.replace(tag, text)
 
     buffer = BytesIO()
     await asyncio.get_running_loop().run_in_executor(None, doc.save, buffer)
@@ -200,3 +194,4 @@ async def generate_doc(request: Request):
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": "attachment; filename=RAMS_Document.docx"}
     )
+
