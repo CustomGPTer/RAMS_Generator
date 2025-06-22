@@ -4,6 +4,33 @@
   <meta charset="UTF-8">
   <title>RAMS Generator</title>
   <link rel="stylesheet" href="/static/style.css">
+  <style>
+    #user-input {
+      width: 100%;
+      min-height: 40px;
+      resize: vertical;
+      font-size: 16px;
+      padding: 10px;
+      margin-top: 10px;
+    }
+    #chat {
+      max-height: 70vh;
+      overflow-y: auto;
+      padding-bottom: 10px;
+    }
+    .message {
+      padding: 6px 10px;
+      margin: 4px 0;
+      border-radius: 4px;
+    }
+    .message.ai {
+      background: #eef3ff;
+    }
+    .message.user {
+      background: #d8ffd8;
+      text-align: right;
+    }
+  </style>
 </head>
 <body>
   <div class="container">
@@ -14,7 +41,7 @@
     </div>
 
     <form id="input-form">
-      <input type="text" id="user-input" autocomplete="off" placeholder="Type your task or answer..." />
+      <textarea id="user-input" autocomplete="off" placeholder="Type your task or answer..." rows="2"></textarea>
       <button type="submit">Send</button>
     </form>
   </div>
@@ -47,7 +74,6 @@
       input.value = '';
 
       if (!sessionId) {
-        // First message: task description
         addMessage('Generating tailored questions...', 'ai');
         const response = await fetch('/rams_chat/start', {
           method: 'POST',
@@ -61,10 +87,11 @@
         allQuestions = data.questions;
         totalQuestions = allQuestions.length;
         currentQuestion = 0;
-        addMessage(allQuestions[currentQuestion], 'ai');
+
+        addMessage(`${currentQuestion + 1}. ${allQuestions[currentQuestion]}`, 'ai');
         waitingForAnswer = true;
+
       } else if (waitingForAnswer) {
-        // Send answer
         const response = await fetch('/rams_chat/answer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -90,13 +117,15 @@
           a.click();
           window.URL.revokeObjectURL(url);
 
-          addMessage("RAMS download complete. You may refresh the page to start a new task.", 'ai');
+          addMessage("✅ RAMS download complete. Refresh the page to start a new one.", 'ai');
           form.style.display = "none";
         } else {
-          addMessage(data.next_question, 'ai');
+          currentQuestion++;
+          addMessage(`${currentQuestion + 1}. ${data.next_question}`, 'ai');
         }
       }
     });
   </script>
 </body>
 </html>
+
