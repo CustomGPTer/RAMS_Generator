@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseSettings, ValidationError
-import openai
+from openai import AsyncOpenAI
 from docx import Document
 
 # Setup logging
@@ -30,8 +30,8 @@ except ValidationError as e:
     logger.error("Config validation failed: %s", e)
     raise
 
-# Configure OpenAI
-openai.api_key = settings.openai_api_key
+# Configure OpenAI client (new syntax for openai>=1.0.0)
+client = AsyncOpenAI(api_key=settings.openai_api_key)
 OPENAI_MODEL = settings.openai_model
 
 # FastAPI setup
@@ -72,12 +72,12 @@ async def start_rams(request: Request, task: str = Body(..., embed=True)):
 
     system_msg = (
         "You are an expert in Risk Assessment and Method Statement (RAMS). "
-        "Given a construction task, generate exactly 20 questions covering scope, PPE, methods, rescue plan, tools, training, etc."
+        "Given a construction task, generate exactly 20 numbered questions covering scope, PPE, methods, rescue plan, tools, training, etc."
     )
-    user_msg = f"Task: {task.strip()}. Generate 20 numbered questions."
+    user_msg = f"Task: {task.strip()}"
 
     try:
-        gpt = await openai.ChatCompletion.acreate(
+        gpt = await client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": system_msg},
@@ -85,14 +85,9 @@ async def start_rams(request: Request, task: str = Body(..., embed=True)):
             ],
             temperature=0.0
         )
-        lines = gpt.choices[0].message.content.strip().splitlines()
-        questions = []
-        for i, line in enumerate(lines, start=1):
-            if not line.strip():
-                continue
-            if not line.strip().startswith(str(i)):
-                line = f"{i}. {line.strip()}"
-            questions.append(line.strip())
+        content = gpt.choices[0].message.content.strip()
+        lines = content.splitlines()
+        questions = [line.strip() for line in lines if line.strip()]
     except Exception as e:
         logger.exception("Failed to generate questions")
         raise HTTPException(status_code=500, detail="Failed to generate questions.")
@@ -158,16 +153,19 @@ async def generate_doc(request: Request):
 
     try:
         results = await asyncio.gather(*[
-            openai.ChatCompletion.acreate(
+            client.chat.completions.create(
                 model=OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": "You are a health and safety RAMS expert."},
-                    {"role": "user", "content": text}
+                    {"role": "user", "content": prompt}
                 ],
                 temperature=0.0
-            ) for text in prompts.values()
+            ) for prompt in prompts.values()
         ])
-        sections = {key: results[i].choices[0].message.content.strip() for i, key in enumerate(prompts)}
+        sections = {
+            key: results[i].choices[0].message.content.strip()
+            for i, key in enumerate(prompts)
+        }
     except Exception as e:
         logger.exception("Failed to generate sections")
         raise HTTPException(status_code=500, detail="Failed to generate RAMS content.")
