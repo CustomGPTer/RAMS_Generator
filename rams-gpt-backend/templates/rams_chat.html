@@ -42,20 +42,18 @@
 
     <form id="input-form">
       <textarea id="user-input" autocomplete="off" placeholder="Type your task or answer..." rows="2"></textarea>
-      <button type="submit">Send</button>
+      <button type="submit" id="send-button">Send</button>
     </form>
   </div>
 
   <script>
-    let sessionId = null;
+    let sessionStarted = false;
     let currentQuestion = 0;
-    let totalQuestions = 0;
-    let waitingForAnswer = false;
     let allQuestions = [];
-
     const form = document.getElementById('input-form');
     const input = document.getElementById('user-input');
     const chat = document.getElementById('chat');
+    const button = document.getElementById('send-button');
 
     function addMessage(text, sender) {
       const msg = document.createElement('div');
@@ -72,60 +70,63 @@
 
       addMessage(value, 'user');
       input.value = '';
+      button.disabled = true;
 
-      if (!sessionId) {
-        addMessage('Generating tailored questions...', 'ai');
-        const response = await fetch('/rams_chat/start', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ task: value })
-        });
-        const data = await response.json();
-        if (data.error) return addMessage("Error: " + data.error, 'ai');
+      try {
+        if (!sessionStarted) {
+          addMessage('🟡 Generating tailored questions...', 'ai');
 
-        sessionId = data.session_id;
-        allQuestions = data.questions;
-        totalQuestions = allQuestions.length;
-        currentQuestion = 0;
-
-        addMessage(`${currentQuestion + 1}. ${allQuestions[currentQuestion]}`, 'ai');
-        waitingForAnswer = true;
-
-      } else if (waitingForAnswer) {
-        const response = await fetch('/rams_chat/answer', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ session_id: sessionId, answer: value })
-        });
-        const data = await response.json();
-        if (data.error) return addMessage("Error: " + data.error, 'ai');
-
-        if (data.complete) {
-          addMessage("Generating your RAMS document...", 'ai');
-
-          const downloadResponse = await fetch('/rams_chat/generate', {
+          const response = await fetch('/rams_chat/start', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ session_id: sessionId })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task: value })
           });
+          const data = await response.json();
+          if (data.error) return addMessage("Error: " + data.error, 'ai');
 
-          const blob = await downloadResponse.blob();
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = "RAMS.docx";
-          a.click();
-          window.URL.revokeObjectURL(url);
+          sessionStarted = true;
+          allQuestions = [];
+          currentQuestion = 0;
+          allQuestions.push(data.question);
+          addMessage(`1. ${data.question}`, 'ai');
 
-          addMessage("✅ RAMS download complete. Refresh the page to start a new one.", 'ai');
-          form.style.display = "none";
         } else {
-          currentQuestion++;
-          addMessage(`${currentQuestion + 1}. ${data.next_question}`, 'ai');
+          const response = await fetch('/rams_chat/answer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ answer: value })
+          });
+          const data = await response.json();
+          if (data.error) return addMessage("Error: " + data.error, 'ai');
+
+          if (data.message) {
+            addMessage("🟢 Generating your RAMS document...", 'ai');
+
+            const downloadResponse = await fetch('/rams_chat/generate');
+            const blob = await downloadResponse.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = "RAMS.docx";
+            a.click();
+            window.URL.revokeObjectURL(url);
+
+            addMessage("✅ RAMS download complete. Refresh the page to start a new one.", 'ai');
+            form.style.display = "none";
+          } else if (data.question) {
+            allQuestions.push(data.question);
+            currentQuestion++;
+            addMessage(`${currentQuestion + 1}. ${data.question}`, 'ai');
+          }
         }
+      } catch (err) {
+        addMessage("❌ An error occurred: " + err.message, 'ai');
+      } finally {
+        button.disabled = false;
       }
     });
   </script>
 </body>
 </html>
+
 
