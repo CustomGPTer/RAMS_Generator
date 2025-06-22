@@ -53,3 +53,4 @@ chatForm.addEventListener('submit', async (e) => {
     placeholder.textContent = 'Error: ' + err.message;
   }
 });
+
