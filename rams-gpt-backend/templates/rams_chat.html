@@ -1,131 +1,63 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>RAMS Generator</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI RAMS Generator</title>
   <style>
-    #user-input {
-      width: 100%;
-      min-height: 40px;
-      resize: vertical;
-      font-size: 16px;
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    #chat-container {
+      display: flex;
+      flex-direction: column;
+      max-width: 600px;
+      max-height: 400px;
+      margin-bottom: 10px;
       padding: 10px;
-      margin-top: 10px;
-    }
-    #chat {
-      max-height: 70vh;
+      border: 1px solid #ccc;
       overflow-y: auto;
-      padding-bottom: 10px;
     }
     .message {
-      padding: 6px 10px;
-      margin: 4px 0;
-      border-radius: 4px;
+      padding: 10px;
+      margin: 5px 0;
+      border-radius: 5px;
+      white-space: pre-wrap;
+      max-width: 80%;
     }
-    .message.ai {
-      background: #eef3ff;
+    .assistant.message {
+      background-color: #cfe2ff;
+      align-self: flex-start;
     }
-    .message.user {
-      background: #d8ffd8;
-      text-align: right;
+    .user.message {
+      background-color: #e9ecef;
+      align-self: flex-end;
+    }
+    #chat-form { display: flex; max-width: 600px; }
+    #message-input { flex: 1; padding: 8px; }
+    #chat-form button { padding: 8px 20px; }
+    .download-link {
+      display: block;
+      margin: 10px 0;
+      font-weight: bold;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>AI RAMS Generator</h1>
+  <h1>AI RAMS Generator</h1>
 
-    <div id="chat">
-      <div class="message ai">Please describe the task you'd like a RAMS for. Include as much detail as possible.</div>
+  <div id="chat-container">
+    {% for msg in messages %}
+    <div class="{{ 'assistant' if msg.role == 'assistant' else 'user' }} message">
+      {{ msg.content }}
     </div>
-
-    <form id="input-form">
-      <textarea id="user-input" autocomplete="off" placeholder="Type your task or answer..." rows="2"></textarea>
-      <button type="submit" id="send-button">Send</button>
-    </form>
+    {% endfor %}
   </div>
 
-  <script>
-    let sessionStarted = false;
-    let currentQuestion = 0;
-    let allQuestions = [];
-    const form = document.getElementById('input-form');
-    const input = document.getElementById('user-input');
-    const chat = document.getElementById('chat');
-    const button = document.getElementById('send-button');
+  <form id="chat-form">
+    <input type="text" id="message-input" placeholder="Type your task or answer..." autocomplete="off" required />
+    <button type="submit">Send</button>
+  </form>
 
-    function addMessage(text, sender) {
-      const msg = document.createElement('div');
-      msg.className = 'message ' + sender;
-      msg.textContent = text;
-      chat.appendChild(msg);
-      chat.scrollTop = chat.scrollHeight;
-    }
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const value = input.value.trim();
-      if (!value) return;
-
-      addMessage(value, 'user');
-      input.value = '';
-      button.disabled = true;
-
-      try {
-        if (!sessionStarted) {
-          addMessage('🟡 Generating tailored questions...', 'ai');
-
-          const response = await fetch('/rams_chat/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ task: value })
-          });
-          const data = await response.json();
-          if (data.error) return addMessage("Error: " + data.error, 'ai');
-
-          sessionStarted = true;
-          allQuestions = [];
-          currentQuestion = 0;
-          allQuestions.push(data.question);
-          addMessage(`1. ${data.question}`, 'ai');
-
-        } else {
-          const response = await fetch('/rams_chat/answer', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ answer: value })
-          });
-          const data = await response.json();
-          if (data.error) return addMessage("Error: " + data.error, 'ai');
-
-          if (data.message) {
-            addMessage("🟢 Generating your RAMS document...", 'ai');
-
-            const downloadResponse = await fetch('/rams_chat/generate');
-            const blob = await downloadResponse.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = "RAMS.docx";
-            a.click();
-            window.URL.revokeObjectURL(url);
-
-            addMessage("✅ RAMS download complete. Refresh the page to start a new one.", 'ai');
-            form.style.display = "none";
-          } else if (data.question) {
-            allQuestions.push(data.question);
-            currentQuestion++;
-            addMessage(`${currentQuestion + 1}. ${data.question}`, 'ai');
-          }
-        }
-      } catch (err) {
-        addMessage("❌ An error occurred: " + err.message, 'ai');
-      } finally {
-        button.disabled = false;
-      }
-    });
-  </script>
+  <script src="/static/script.js"></script>
 </body>
 </html>
 
