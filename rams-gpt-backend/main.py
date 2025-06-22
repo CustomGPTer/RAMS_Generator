@@ -1,195 +1,174 @@
-import os
-import uuid
-from datetime import datetime, timedelta
-
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from fastapi.templating import Jinja2Templates
+import os, time, uuid, asyncio, logging
+from io import BytesIO
+from fastapi import FastAPI, Request, Body, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from dotenv import load_dotenv
-from openai import AsyncOpenAI, OpenAIError
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseSettings
+from openai import AsyncOpenAI
 from docx import Document
 
-# Load environment variables from .env file if present
-load_dotenv()
+# Logging setup
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
+# Load settings from .env
+class Settings(BaseSettings):
+    openai_api_key: str
+    openai_model: str
+    template_path: str
+
+    class Config:
+        env_file = ".env"
+
+settings = Settings()
+client = AsyncOpenAI(api_key=settings.openai_api_key)
+OPENAI_MODEL = settings.openai_model
+
+# App setup
 app = FastAPI()
-
-# Mount static files directory if exists (for CSS/JS if any)
-if os.path.isdir("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Set up Jinja2 templates directory
+app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# Get OpenAI API key from environment and initialize AsyncOpenAI client
-openai_api_key = os.getenv("OPENAI_API_KEY")
-if not openai_api_key:
-    raise RuntimeError("OPENAI_API_KEY environment variable not set.")
-openai_client = AsyncOpenAI(api_key=openai_api_key)
-
-# Session data structure: holds questions list, answers list, etc.
+# Session store
 sessions = {}
-# Session expiration duration
-SESSION_TIMEOUT = timedelta(hours=1)
+sessions_lock = asyncio.Lock()
+SESSION_TTL = 3600
 
-# Utility function to clean up expired sessions
 def cleanup_sessions():
-    now = datetime.utcnow()
-    expired_keys = [sid for sid, data in sessions.items() if now - data["last_access"] > SESSION_TIMEOUT]
-    for sid in expired_keys:
-        sessions.pop(sid, None)
-        # Remove any generated document for this session
-        output_file = f"templates/RAMS_Output_{sid}.docx"
-        try:
-            if os.path.exists(output_file):
-                os.remove(output_file)
-        except OSError:
-            pass
+    now = time.time()
+    to_delete = [k for k,v in sessions.items() if now - v.get("last_active", 0) > SESSION_TTL]
+    for k in to_delete:
+        sessions.pop(k, None)
 
-# Landing page route - serves index.html
 @app.get("/", response_class=HTMLResponse)
-async def serve_index(request: Request):
+async def index(request: Request):
+    cleanup_sessions()
     return templates.TemplateResponse("index.html", {"request": request})
 
-# RAMS Generator interface page - serves rams_chat.html and initiates a session
 @app.get("/rams", response_class=HTMLResponse)
-async def serve_rams(request: Request):
-    # Create a new session ID
+async def rams_chat(request: Request):
+    return templates.TemplateResponse("rams_chat.html", {"request": request})
+
+@app.post("/rams_chat/start")
+async def start(task: str = Body(...)):
+    if not task.strip():
+        raise HTTPException(status_code=400, detail="Task is empty.")
+
     session_id = str(uuid.uuid4())
-    cleanup_sessions()  # clean old sessions
-    # Initialize session data
-    sessions[session_id] = {
-        "created": datetime.utcnow(),
-        "last_access": datetime.utcnow(),
-        "questions": None,
-        "answers": [],
-        "current_index": -1  # no question asked yet
-    }
-    # Render the chat interface with the session_id
-    return templates.TemplateResponse("rams_chat.html", {"request": request, "session_id": session_id})
+    system_prompt = (
+        "You are an expert in writing Risk Assessment and Method Statement (RAMS) documents. "
+        "Given a construction task, generate 20 specific and numbered questions needed to write a bespoke RAMS. "
+        "Cover scope, hazards, PPE, controls, rescue plans, COSHH, training, plant, people and permits."
+    )
 
-# API endpoint to handle generating questions and receiving answers
-@app.post("/api/submit")
-async def handle_submit(request: Request):
-    data = await request.json()
-    session_id = data.get("session_id")
-    user_input = data.get("message", "").strip()
-    if not session_id or session_id not in sessions:
-        # Invalid or missing session
-        raise HTTPException(status_code=400, detail="Invalid session.")
-    session = sessions[session_id]
-    # Update last access time
-    session["last_access"] = datetime.utcnow()
-    cleanup_sessions()
-    # Check for session expiration
-    if datetime.utcnow() - session["created"] > SESSION_TIMEOUT:
-        # Session expired
-        sessions.pop(session_id, None)
-        return JSONResponse({"error": "Session expired. Please start a new session."}, status_code=440)
-    # If no questions generated yet, the user_input is the task description
-    if session["questions"] is None:
-        if not user_input:
-            return JSONResponse({"error": "Task description cannot be empty."}, status_code=400)
-        # Use OpenAI API to generate 20 tailored questions
-        try:
-            prompt = (
-                "You are an expert in health and safety. You will be provided with a description of a task. "
-                "Generate a numbered list of 20 specific questions to ask in order to gather all information needed to create a comprehensive Risk Assessment and Method Statement for that task. "
-                f"Task description: \"{user_input}\""
-            )
-            response = await openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            questions_text = response.choices[0].message.content.strip()
-        except OpenAIError as e:
-            # Return an error message if the OpenAI API call fails
-            return JSONResponse({"error": f"Failed to generate questions: {str(e)}"}, status_code=500)
-        # Split the response into individual questions (expecting a numbered list)
-        questions = []
-        for line in questions_text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            # Remove leading numbering or bullets (e.g., "1.", "1)", "1-" etc.)
-            line = line.lstrip("0123456789.):- ").strip()
-            if line:
-                questions.append(line)
-        # Ensure exactly 20 questions in the list
-        if len(questions) >= 20:
-            questions = questions[:20]
-        else:
-            questions += ["(Question not generated)"] * (20 - len(questions))
-        session["questions"] = questions
-        session["current_index"] = 0  # index of current question awaiting answer
-        # Return the first question
-        return {"question": questions[0]}
+    try:
+        res = await client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": task.strip()}
+            ],
+            temperature=0.0
+        )
+        questions = [line.strip() for line in res.choices[0].message.content.strip().splitlines() if line.strip()]
+    except Exception as e:
+        logger.exception("OpenAI error")
+        raise HTTPException(500, "Failed to generate questions.")
+
+    if len(questions) < 20:
+        raise HTTPException(500, "OpenAI returned too few questions.")
+
+    async with sessions_lock:
+        sessions[session_id] = {
+            "questions": questions[:20],
+            "answers": [],
+            "last_active": time.time()
+        }
+
+    return {"session_id": session_id, "questions": questions[:20]}
+
+@app.post("/rams_chat/answer")
+async def answer(session_id: str = Body(...), answer: str = Body(...)):
+    async with sessions_lock:
+        session = sessions.get(session_id)
+
+    if not session:
+        raise HTTPException(400, "Session not found.")
+    if not answer.strip():
+        raise HTTPException(400, "Answer is empty.")
+
+    session["answers"].append(answer.strip())
+    session["last_active"] = time.time()
+
+    if len(session["answers"]) >= len(session["questions"]):
+        return {"complete": True}
     else:
-        # Questions are already generated, so this input is an answer to the current question
-        idx = session["current_index"]
-        if idx is None or idx < 0 or session["questions"] is None:
-            return JSONResponse({"error": "No active questions. Please start over."}, status_code=400)
-        # Store the user's answer
-        session["answers"].append(user_input)
-        # Move to next question index
-        session["current_index"] += 1
-        idx = session["current_index"]
-        if idx < len(session["questions"]):
-            # There are more questions to ask
-            next_question = session["questions"][idx]
-            return {"question": next_question}
-        else:
-            # All questions have been answered, generate the RAMS document
-            answers = session["answers"]
-            total = len(answers)
-            # Split answers into three sections (Risk, Sequence, Method) roughly equally
-            part1 = answers[: total//3 if total//3 > 0 else total]
-            part2 = answers[total//3 : 2*total//3 if 2*total//3 > 0 else total]
-            part3 = answers[2*total//3 :]
-            risk_section_text = "\n".join(part1).strip()
-            sequence_section_text = "\n".join(part2).strip()
-            method_section_text = "\n".join(part3).strip()
-            # Load the Word template
-            try:
-                doc = Document("templates/template_rams.docx")
-            except Exception as e:
-                return JSONResponse({"error": f"Failed to load template: {e}"}, status_code=500)
-            # Replace placeholders in the document
-            def replace_in_element(element, placeholder, replacement):
-                """Recursively replace placeholder text in all paragraphs within the given element."""
-                for paragraph in element.paragraphs:
-                    if placeholder in paragraph.text:
-                        for run in paragraph.runs:
-                            if placeholder in run.text:
-                                run.text = run.text.replace(placeholder, replacement)
-                if hasattr(element, "tables"):
-                    for table in element.tables:
-                        for row in table.rows:
-                            for cell in row.cells:
-                                replace_in_element(cell, placeholder, replacement)
-            replace_in_element(doc, "RISK_SECTION", risk_section_text)
-            replace_in_element(doc, "SEQUENCE_SECTION", sequence_section_text)
-            replace_in_element(doc, "METHOD_SECTION", method_section_text)
-            # Save the filled document to a file
-            output_path = f"templates/RAMS_Output_{session_id}.docx"
-            try:
-                doc.save(output_path)
-            except Exception as e:
-                return JSONResponse({"error": f"Failed to save output document: {e}"}, status_code=500)
-            # Signal completion (client will download the file via /download)
-            return {"done": True}
+        next_q = session["questions"][len(session["answers"])]
+        return {"complete": False, "next_question": next_q}
 
-# Endpoint to download the generated RAMS document
-@app.get("/download")
-async def download_rams(session_id: str):
-    if session_id not in sessions:
-        raise HTTPException(status_code=400, detail="Invalid or expired session.")
-    file_path = f"templates/RAMS_Output_{session_id}.docx"
-    if not os.path.isfile(file_path):
-        raise HTTPException(status_code=404, detail="Generated document not found.")
-    return FileResponse(file_path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename="RAMS_Output.docx")
+@app.post("/rams_chat/generate")
+async def generate(session_id: str = Body(...)):
+    async with sessions_lock:
+        session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(400, "Session not found.")
+    if len(session["answers"]) < 20:
+        raise HTTPException(400, "Answer all questions before generating RAMS.")
+
+    qa_text = "\n".join([f"Q{i+1}: {q}\nA{i+1}: {a}" for i,(q,a) in enumerate(zip(session["questions"], session["answers"]))])
+
+    prompts = {
+        "RISK_SECTION": "Write the Risk Assessment section:\n" + qa_text,
+        "SEQUENCE_SECTION": "Write the Sequence of Activities section:\n" + qa_text,
+        "METHOD_SECTION": "Write the Method Statement section including roles, PPE, and rescue:\n" + qa_text
+    }
+
+    try:
+        results = await asyncio.gather(*[
+            client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[{"role": "system", "content": "You are a RAMS expert"}, {"role": "user", "content": p}],
+                temperature=0.0
+            ) for p in prompts.values()
+        ])
+        content = {k: results[i].choices[0].message.content.strip() for i, k in enumerate(prompts)}
+    except Exception:
+        logger.exception("Final RAMS generation failed")
+        raise HTTPException(500, "RAMS generation failed.")
+
+    # Load and insert into Word doc
+    loop = asyncio.get_running_loop()
+    try:
+        doc = await loop.run_in_executor(None, Document, settings.template_path)
+    except Exception:
+        raise HTTPException(500, "Could not load Word template.")
+
+    for para in doc.paragraphs:
+        for k, v in content.items():
+            if k in para.text:
+                para.text = para.text.replace(k, v)
+
+    for tbl in doc.tables:
+        for row in tbl.rows:
+            for cell in row.cells:
+                for k, v in content.items():
+                    if k in cell.text:
+                        cell.text = cell.text.replace(k, v)
+
+    buf = BytesIO()
+    await loop.run_in_executor(None, doc.save, buf)
+    buf.seek(0)
+
+    async with sessions_lock:
+        sessions.pop(session_id, None)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": "attachment; filename=RAMS_Document.docx"}
+    )
+
 
 
 
