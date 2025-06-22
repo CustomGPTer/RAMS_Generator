@@ -1,64 +1,94 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
   <title>AI RAMS Generator</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    #chat-container {
-      display: flex;
-      flex-direction: column;
-      max-width: 600px;
-      max-height: 400px;
-      margin-bottom: 10px;
-      padding: 10px;
-      border: 1px solid #ccc;
-      overflow-y: auto;
-    }
-    .message {
-      padding: 10px;
-      margin: 5px 0;
-      border-radius: 5px;
-      white-space: pre-wrap;
-      max-width: 80%;
-    }
-    .assistant.message {
-      background-color: #cfe2ff;
-      align-self: flex-start;
-    }
-    .user.message {
-      background-color: #e9ecef;
-      align-self: flex-end;
-    }
-    #chat-form { display: flex; max-width: 600px; }
-    #message-input { flex: 1; padding: 8px; }
-    #chat-form button { padding: 8px 20px; }
-    .download-link {
-      display: block;
-      margin: 10px 0;
-      font-weight: bold;
-    }
-  </style>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <h1>AI RAMS Generator</h1>
+  <div class="container">
+    <h1>AI RAMS Generator</h1>
 
-  <div id="chat-container">
-    {% for msg in messages %}
-    <div class="{{ 'assistant' if msg.role == 'assistant' else 'user' }} message">
-      {{ msg.content }}
+    <div id="chat">
+      <div class="message ai">Please describe the task you'd like a RAMS for. Include as much detail as possible.</div>
     </div>
-    {% endfor %}
+
+    <form id="input-form">
+      <textarea id="user-input" placeholder="Type your task or answer..." rows="2"></textarea>
+      <button type="submit">Send</button>
+    </form>
   </div>
 
-  <form id="chat-form">
-    <input type="text" id="message-input" placeholder="Type your task or answer..." autocomplete="off" required />
-    <button type="submit">Send</button>
-  </form>
+  <script>
+    let sessionId = null;
+    let currentQuestionIndex = 0;
+    let questions = [];
 
-  <script src="/static/script.js"></script>
+    const form = document.getElementById('input-form');
+    const input = document.getElementById('user-input');
+    const chat = document.getElementById('chat');
+
+    function addMessage(text, sender) {
+      const msg = document.createElement('div');
+      msg.className = 'message ' + sender;
+      msg.textContent = text;
+      chat.appendChild(msg);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const value = input.value.trim();
+      if (!value) return;
+      addMessage(value, 'user');
+      input.value = '';
+
+      // If no session, this is the task
+      if (!sessionId) {
+        addMessage("🔄 Generating tailored questions...", "ai");
+        const res = await fetch('/rams_chat/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ task: value })
+        });
+        const data = await res.json();
+        sessionId = data.session_id;
+        questions = data.questions;
+        currentQuestionIndex = 0;
+        addMessage(`1. ${questions[0]}`, 'ai');
+        return;
+      }
+
+      // Send answer
+      const res = await fetch('/rams_chat/answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, answer: value })
+      });
+      const data = await res.json();
+
+      if (data.complete) {
+        addMessage("⚙️ Generating your RAMS document...", 'ai');
+        const finalRes = await fetch('/rams_chat/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId })
+        });
+        const blob = await finalRes.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = "RAMS_Document.docx";
+        a.click();
+        window.URL.revokeObjectURL(url);
+        addMessage("✅ RAMS document ready and downloaded.", 'ai');
+        form.style.display = 'none';
+      } else {
+        currentQuestionIndex++;
+        addMessage(`${currentQuestionIndex + 1}. ${data.next_question}`, 'ai');
+      }
+    });
+  </script>
 </body>
 </html>
-
 
