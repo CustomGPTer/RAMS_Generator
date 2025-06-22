@@ -4,19 +4,19 @@ import uuid
 import asyncio
 import logging
 from io import BytesIO
-from fastapi import FastAPI, Request, Body, HTTPException
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseSettings, ValidationError
+from pydantic import BaseSettings, ValidationError, BaseModel
 from openai import AsyncOpenAI
 from docx import Document
 
-# Setup logging
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load environment settings
+# Environment settings
 class Settings(BaseSettings):
     openai_api_key: str
     openai_model: str
@@ -28,39 +28,53 @@ class Settings(BaseSettings):
 try:
     settings = Settings()
 except ValidationError as e:
-    logger.error(f"Environment config error: {e}")
+    logger.error("Environment settings invalid: %s", e)
     raise
 
 # OpenAI client
 client = AsyncOpenAI(api_key=settings.openai_api_key)
 OPENAI_MODEL = settings.openai_model
 
-# FastAPI setup
+# FastAPI app
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# Session management
+# Sessions
 sessions = {}
 sessions_lock = asyncio.Lock()
 SESSION_TTL = 3600  # 1 hour
 
 def cleanup_sessions():
     now = time.time()
-    expired = [sid for sid, s in sessions.items() if now - s.get("last_active", 0) > SESSION_TTL]
+    expired = [sid for sid, s in sessions.items() if now - s["last_active"] > SESSION_TTL]
     for sid in expired:
         sessions.pop(sid, None)
     if expired:
-        logger.info(f"Cleaned up {len(expired)} expired sessions.")
+        logger.info(f"Cleaned {len(expired)} expired sessions")
 
+# Homepage
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     cleanup_sessions()
     return templates.TemplateResponse("rams_chat.html", {"request": request})
 
+# Pydantic models
+class StartTask(BaseModel):
+    task: str
+
+class AnswerInput(BaseModel):
+    session_id: str
+    answer: str
+
+class GenerateInput(BaseModel):
+    session_id: str
+
+# Start RAMS session
 @app.post("/rams_chat/start")
-async def start_rams(request: Request, task: str = Body(..., embed=True)):
-    if not task.strip():
+async def start_rams(payload: StartTask):
+    task = payload.task.strip()
+    if not task:
         raise HTTPException(status_code=400, detail="Task description cannot be empty.")
 
     session_id = str(uuid.uuid4())
@@ -75,7 +89,7 @@ async def start_rams(request: Request, task: str = Body(..., embed=True)):
             model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": task.strip()}
+                {"role": "user", "content": task}
             ],
             temperature=0.0
         )
@@ -90,7 +104,7 @@ async def start_rams(request: Request, task: str = Body(..., embed=True)):
 
     async with sessions_lock:
         sessions[session_id] = {
-            "task": task.strip(),
+            "task": task,
             "questions": questions[:20],
             "answers": [],
             "last_active": time.time()
@@ -98,17 +112,18 @@ async def start_rams(request: Request, task: str = Body(..., embed=True)):
 
     return JSONResponse(content={"session_id": session_id, "questions": questions[:20]})
 
+# Submit answer
 @app.post("/rams_chat/answer")
-async def answer_rams(session_id: str = Body(...), answer: str = Body(...)):
+async def answer_rams(payload: AnswerInput):
     async with sessions_lock:
-        session = sessions.get(session_id)
+        session = sessions.get(payload.session_id)
 
     if not session:
         raise HTTPException(status_code=400, detail="Session not found.")
-    if not answer.strip():
+    if not payload.answer.strip():
         raise HTTPException(status_code=400, detail="Answer cannot be empty.")
 
-    session["answers"].append(answer.strip())
+    session["answers"].append(payload.answer.strip())
     session["last_active"] = time.time()
 
     if len(session["answers"]) >= len(session["questions"]):
@@ -117,17 +132,20 @@ async def answer_rams(session_id: str = Body(...), answer: str = Body(...)):
     next_question = session["questions"][len(session["answers"])]
     return {"complete": False, "next_question": next_question}
 
+# Generate document
 @app.post("/rams_chat/generate")
-async def generate_rams(session_id: str = Body(...)):
+async def generate_rams(payload: GenerateInput):
     async with sessions_lock:
-        session = sessions.get(session_id)
+        session = sessions.get(payload.session_id)
 
     if not session:
         raise HTTPException(status_code=400, detail="Session not found.")
     if len(session["answers"]) < len(session["questions"]):
         raise HTTPException(status_code=400, detail="All questions must be answered.")
 
-    qa_block = "\n".join([f"Q{i+1}: {q}\nA{i+1}: {a}" for i, (q, a) in enumerate(zip(session["questions"], session["answers"]))])
+    qa_block = "\n".join(
+        [f"Q{i+1}: {q}\nA{i+1}: {a}" for i, (q, a) in enumerate(zip(session["questions"], session["answers"]))]
+    )
 
     prompts = {
         "RISK_SECTION": f"Write the Risk Assessment section. Use the Q&A below:\n{qa_block}",
@@ -151,17 +169,16 @@ async def generate_rams(session_id: str = Body(...)):
             for i, key in enumerate(prompts)
         }
     except Exception:
-        logger.exception("Failed to generate final RAMS sections.")
+        logger.exception("Failed to generate RAMS sections.")
         raise HTTPException(status_code=500, detail="RAMS generation failed.")
 
     try:
         loop = asyncio.get_running_loop()
         doc = await loop.run_in_executor(None, Document, settings.template_path)
     except Exception:
-        logger.exception("Word template could not be opened.")
-        raise HTTPException(status_code=500, detail="Failed to open Word template.")
+        logger.exception("Failed to load template.")
+        raise HTTPException(status_code=500, detail="Could not open template.")
 
-    # Replace placeholders
     for para in doc.paragraphs:
         for key, val in sections.items():
             if key in para.text:
@@ -179,7 +196,7 @@ async def generate_rams(session_id: str = Body(...)):
     buffer.seek(0)
 
     async with sessions_lock:
-        sessions.pop(session_id, None)
+        sessions.pop(payload.session_id, None)
 
     return StreamingResponse(
         buffer,
