@@ -12,22 +12,23 @@ from pydantic import BaseSettings, ValidationError
 from openai import AsyncOpenAI
 from docx import Document
 
-# Logging setup
+# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load .env settings
+# Load environment settings
 class Settings(BaseSettings):
     openai_api_key: str
     openai_model: str
     template_path: str
+
     class Config:
         env_file = ".env"
 
 try:
     settings = Settings()
 except ValidationError as e:
-    logger.error(f"Configuration error: {e}")
+    logger.error(f"Environment config error: {e}")
     raise
 
 # OpenAI client
@@ -39,7 +40,7 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# Session store
+# Session management
 sessions = {}
 sessions_lock = asyncio.Lock()
 SESSION_TTL = 3600  # 1 hour
@@ -52,21 +53,13 @@ def cleanup_sessions():
     if expired:
         logger.info(f"Cleaned up {len(expired)} expired sessions.")
 
-# Routes
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+async def root(request: Request):
     cleanup_sessions()
-    return templates.TemplateResponse("index.html", {"request": request})
-
-@app.get("/rams", response_class=HTMLResponse)
-async def rams_page(request: Request):
     return templates.TemplateResponse("rams_chat.html", {"request": request})
 
 @app.post("/rams_chat/start")
 async def start_rams(request: Request, task: str = Body(..., embed=True)):
-    async with sessions_lock:
-        cleanup_sessions()
-
     if not task.strip():
         raise HTTPException(status_code=400, detail="Task description cannot be empty.")
 
@@ -88,28 +81,30 @@ async def start_rams(request: Request, task: str = Body(..., embed=True)):
         )
         content = response.choices[0].message.content.strip()
         questions = [line.strip() for line in content.splitlines() if line.strip()]
-    except Exception as e:
-        logger.exception("Failed to generate questions")
-        raise HTTPException(status_code=500, detail="Failed to generate questions from OpenAI.")
+    except Exception:
+        logger.exception("OpenAI failed to generate questions.")
+        raise HTTPException(status_code=500, detail="Failed to generate questions.")
 
     if len(questions) < 20:
-        raise HTTPException(status_code=500, detail="OpenAI returned fewer than 20 questions.")
+        raise HTTPException(status_code=500, detail="Expected 20 questions from OpenAI.")
 
-    sessions[session_id] = {
-        "questions": questions[:20],
-        "answers": [],
-        "last_active": time.time()
-    }
+    async with sessions_lock:
+        sessions[session_id] = {
+            "task": task.strip(),
+            "questions": questions[:20],
+            "answers": [],
+            "last_active": time.time()
+        }
 
     return JSONResponse(content={"session_id": session_id, "questions": questions[:20]})
 
 @app.post("/rams_chat/answer")
-async def answer_rams(request: Request, answer: str = Body(..., embed=True)):
-    session_id = request.cookies.get("session_id")
-    if not session_id or session_id not in sessions:
-        raise HTTPException(status_code=400, detail="Session not found.")
+async def answer_rams(session_id: str = Body(...), answer: str = Body(...)):
+    async with sessions_lock:
+        session = sessions.get(session_id)
 
-    session = sessions[session_id]
+    if not session:
+        raise HTTPException(status_code=400, detail="Session not found.")
     if not answer.strip():
         raise HTTPException(status_code=400, detail="Answer cannot be empty.")
 
@@ -122,15 +117,15 @@ async def answer_rams(request: Request, answer: str = Body(..., embed=True)):
     next_question = session["questions"][len(session["answers"])]
     return {"complete": False, "next_question": next_question}
 
-@app.get("/rams_chat/generate")
-async def generate_doc(request: Request):
-    session_id = request.cookies.get("session_id")
-    if not session_id or session_id not in sessions:
-        raise HTTPException(status_code=400, detail="Session not found.")
+@app.post("/rams_chat/generate")
+async def generate_rams(session_id: str = Body(...)):
+    async with sessions_lock:
+        session = sessions.get(session_id)
 
-    session = sessions[session_id]
+    if not session:
+        raise HTTPException(status_code=400, detail="Session not found.")
     if len(session["answers"]) < len(session["questions"]):
-        raise HTTPException(status_code=400, detail="All questions must be answered before generating the RAMS.")
+        raise HTTPException(status_code=400, detail="All questions must be answered.")
 
     qa_block = "\n".join([f"Q{i+1}: {q}\nA{i+1}: {a}" for i, (q, a) in enumerate(zip(session["questions"], session["answers"]))])
 
@@ -156,16 +151,15 @@ async def generate_doc(request: Request):
             for i, key in enumerate(prompts)
         }
     except Exception:
-        logger.exception("Failed to generate final RAMS content")
-        raise HTTPException(status_code=500, detail="Error generating RAMS sections.")
+        logger.exception("Failed to generate final RAMS sections.")
+        raise HTTPException(status_code=500, detail="RAMS generation failed.")
 
-    # Load template
     try:
         loop = asyncio.get_running_loop()
         doc = await loop.run_in_executor(None, Document, settings.template_path)
     except Exception:
-        logger.exception("Failed to open Word template.")
-        raise HTTPException(status_code=500, detail="Could not open Word template.")
+        logger.exception("Word template could not be opened.")
+        raise HTTPException(status_code=500, detail="Failed to open Word template.")
 
     # Replace placeholders
     for para in doc.paragraphs:
@@ -184,14 +178,15 @@ async def generate_doc(request: Request):
     await loop.run_in_executor(None, doc.save, buffer)
     buffer.seek(0)
 
-    # Clean up session
-    sessions.pop(session_id, None)
+    async with sessions_lock:
+        sessions.pop(session_id, None)
 
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": "attachment; filename=RAMS_Document.docx"}
     )
+
 
 
 
