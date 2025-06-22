@@ -1,94 +1,174 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>AI RAMS Generator</title>
-  <link rel="stylesheet" href="/static/style.css">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RAMS Generator Tool</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        h1 {
+            background-color: #4CAF50;
+            color: #fff;
+            padding: 15px;
+            text-align: center;
+            margin: 0;
+        }
+        #chat {
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            max-width: 800px;
+            margin: 0 auto;
+            margin-top: 10px;
+            margin-bottom: 60px; /* space at bottom for input bar */
+            overflow-y: auto;
+        }
+        .message {
+            max-width: 80%;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 5px;
+            line-height: 1.4;
+            word-wrap: break-word;
+        }
+        .bot-message {
+            background-color: #f1f1f1;
+            align-self: flex-start;
+        }
+        .user-message {
+            background-color: #d4f5d4;
+            align-self: flex-end;
+        }
+        #input-area {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background: #fff;
+            display: flex;
+            border-top: 1px solid #ccc;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        #user-input {
+            flex: 1;
+            font-size: 1em;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        #send-btn {
+            font-size: 1em;
+            padding: 10px 20px;
+            margin-left: 10px;
+            border: none;
+            background-color: #4CAF50;
+            color: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #send-btn:disabled {
+            background-color: #aaa;
+            cursor: not-allowed;
+        }
+    </style>
 </head>
 <body>
-  <div class="container">
     <h1>AI RAMS Generator</h1>
-
     <div id="chat">
-      <div class="message ai">Please describe the task you'd like a RAMS for. Include as much detail as possible.</div>
+        <!-- Initial prompt from the bot -->
+        <div class="message bot-message">Please describe the task you'd like a RAMS for. Include as much detail as possible.</div>
     </div>
+    <div id="input-area">
+        <input type="text" id="user-input" placeholder="Type your answer here..." autocomplete="off" />
+        <button id="send-btn">Send</button>
+    </div>
+    <!-- Hidden field to store session ID -->
+    <input type="hidden" id="session-id" value="{{ session_id }}" />
+    <script>
+        const sendBtn = document.getElementById('send-btn');
+        const userInput = document.getElementById('user-input');
+        const chatDiv = document.getElementById('chat');
+        const sessionId = document.getElementById('session-id').value;
+        let currentQuestionNumber = 0;
 
-    <form id="input-form">
-      <textarea id="user-input" placeholder="Type your task or answer..." rows="2"></textarea>
-      <button type="submit">Send</button>
-    </form>
-  </div>
-
-  <script>
-    let sessionId = null;
-    let currentQuestionIndex = 0;
-    let questions = [];
-
-    const form = document.getElementById('input-form');
-    const input = document.getElementById('user-input');
-    const chat = document.getElementById('chat');
-
-    function addMessage(text, sender) {
-      const msg = document.createElement('div');
-      msg.className = 'message ' + sender;
-      msg.textContent = text;
-      chat.appendChild(msg);
-      chat.scrollTop = chat.scrollHeight;
-    }
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const value = input.value.trim();
-      if (!value) return;
-      addMessage(value, 'user');
-      input.value = '';
-
-      // If no session, this is the task
-      if (!sessionId) {
-        addMessage("🔄 Generating tailored questions...", "ai");
-        const res = await fetch('/rams_chat/start', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ task: value })
+        // Send message on button click or Enter key press
+        sendBtn.addEventListener('click', sendMessage);
+        userInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendMessage();
+            }
         });
-        const data = await res.json();
-        sessionId = data.session_id;
-        questions = data.questions;
-        currentQuestionIndex = 0;
-        addMessage(`1. ${questions[0]}`, 'ai');
-        return;
-      }
 
-      // Send answer
-      const res = await fetch('/rams_chat/answer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, answer: value })
-      });
-      const data = await res.json();
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            if (!text) {
+                return;
+            }
+            // Display user's message
+            addMessage(text, 'user');
+            userInput.value = '';  // clear input field
 
-      if (data.complete) {
-        addMessage("⚙️ Generating your RAMS document...", 'ai');
-        const finalRes = await fetch('/rams_chat/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId })
-        });
-        const blob = await finalRes.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = "RAMS_Document.docx";
-        a.click();
-        window.URL.revokeObjectURL(url);
-        addMessage("✅ RAMS document ready and downloaded.", 'ai');
-        form.style.display = 'none';
-      } else {
-        currentQuestionIndex++;
-        addMessage(`${currentQuestionIndex + 1}. ${data.next_question}`, 'ai');
-      }
-    });
-  </script>
+            const isInitial = (currentQuestionNumber === 0);
+            // Show a loading message from the bot
+            const loadingText = isInitial ? 'Generating tailored questions...' : '...';
+            const loadingElem = addMessage(loadingText, 'bot');
+
+            try {
+                const response = await fetch('/api/submit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: sessionId, message: text })
+                });
+                if (!response.ok) {
+                    // Parse error message if available
+                    let errData;
+                    try {
+                        errData = await response.json();
+                    } catch {}
+                    const errMsg = errData && errData.error ? errData.error : `Request failed with status ${response.status}`;
+                    throw new Error(errMsg);
+                }
+                const data = await response.json();
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                if (data.question) {
+                    // Got the next question
+                    currentQuestionNumber += 1;
+                    loadingElem.innerText = currentQuestionNumber + '. ' + data.question;
+                } else if (data.done) {
+                    // All questions answered, generating document
+                    loadingElem.innerText = 'Generating document...';
+                    // Trigger download of the Word document
+                    window.location.href = '/download?session_id=' + encodeURIComponent(sessionId);
+                    // Optionally, inform the user in chat that download started
+                    addMessage('Your RAMS document is being downloaded.', 'bot');
+                }
+            } catch (err) {
+                console.error(err);
+                loadingElem.innerText = 'Error: ' + err.message;
+            }
+        }
+
+        // Helper to add a message to the chat window
+        function addMessage(text, sender) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'message ' + (sender === 'user' ? 'user-message' : 'bot-message');
+            msgDiv.innerText = text;
+            chatDiv.appendChild(msgDiv);
+            // Auto-scroll to bottom
+            chatDiv.scrollTop = chatDiv.scrollHeight;
+            return msgDiv;
+        }
+    </script>
 </body>
 </html>
+
 
