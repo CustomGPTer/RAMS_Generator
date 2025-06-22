@@ -33,10 +33,11 @@ h1 {
 
 .message {
   margin: 10px 0;
-  padding: 10px 14px;
+  padding: 12px 16px;
   border-radius: 10px;
   max-width: 90%;
-  line-height: 1.4;
+  line-height: 1.5;
+  font-size: 16px;
 }
 
 .message.user {
@@ -51,21 +52,30 @@ h1 {
   margin-right: auto;
 }
 
-form {
-  display: flex;
-  gap: 10px;
+.message.loading {
+  color: #777;
+  font-style: italic;
 }
 
-input[type="text"] {
-  flex: 1;
-  padding: 10px;
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+textarea {
+  width: 100%;
+  min-height: 70px;
+  padding: 12px;
   font-size: 16px;
   border-radius: 6px;
   border: 1px solid #ccc;
+  resize: vertical;
+  line-height: 1.4;
 }
 
 button {
-  padding: 10px 20px;
+  padding: 12px;
   background: #007acc;
   color: white;
   font-size: 16px;
@@ -76,4 +86,12 @@ button {
 
 button:hover {
   background: #005c99;
+}
+
+/* Responsive tweak */
+@media (max-width: 600px) {
+  .container {
+    margin: 20px 10px;
+    padding: 15px;
+  }
 }
