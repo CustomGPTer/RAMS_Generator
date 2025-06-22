@@ -107,9 +107,7 @@ async def start_rams(request: Request, task: str = Body(..., embed=True)):
         "last_active": time.time()
     }
 
-    response = JSONResponse(content={"question": questions[0]})
-    response.set_cookie(key="session_id", value=session_id, httponly=True)
-    return response
+    return JSONResponse(content={"session_id": session_id, "questions": questions[:20]})
 
 @app.post("/rams_chat/answer")
 async def answer_rams(request: Request, answer: str = Body(..., embed=True)):
@@ -128,10 +126,10 @@ async def answer_rams(request: Request, answer: str = Body(..., embed=True)):
         session["last_active"] = time.time()
 
         if len(session["answers"]) >= len(session["questions"]):
-            return {"message": "All questions answered. Ready to generate document."}
+            return {"complete": True}
 
         next_question = session["questions"][len(session["answers"])]
-        return {"question": next_question}
+        return {"complete": False, "next_question": next_question}
 
 @app.get("/rams_chat/generate")
 async def generate_doc(request: Request):
